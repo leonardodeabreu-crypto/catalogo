@@ -1,6 +1,7 @@
 import io
 import os
 import re
+import glob
 import time
 import textwrap
 import requests
@@ -43,7 +44,7 @@ if not st.session_state["autenticado"]:
 
 
 # ==========================================
-# GERENCIAMENTO DE FONTES ROBUSTO (SISTEMA LINUX / WINDOWS)
+# GERENCIAMENTO DE FONTES ROBUSTO
 # ==========================================
 OPCOES_FONTES = {
     "Padrão Negrito (Liberation / Arial)": ["LiberationSans-Bold.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"],
@@ -56,7 +57,6 @@ def carregar_fonte(estilo_escolhido, tamanho):
     """Procura e carrega a melhor fonte vetorial disponível no sistema."""
     lista_fontes = OPCOES_FONTES.get(estilo_escolhido, ["LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf", "arial.ttf"])
     
-    # Adiciona fontes de sistema genéricas como garantia
     lista_fontes.extend([
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -70,7 +70,6 @@ def carregar_fonte(estilo_escolhido, tamanho):
         except (IOError, OSError):
             continue
 
-    # Fallback final se nada for encontrado
     return ImageFont.load_default()
 
 
@@ -78,7 +77,7 @@ def carregar_fonte(estilo_escolhido, tamanho):
 # CÓDIGO PRINCIPAL DO SISTEMA
 # ==========================================
 st.title("🥩 Gerador de Catálogo Promocional")
-st.write("Monte banners e catálogos profissionais com suporte a texturas e personalização de fontes.")
+st.write("Monte banners e catálogos profissionais com suporte a texturas, temas dinâmicos e fontes personalizadas.")
 
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state["autenticado"] = False
@@ -239,24 +238,48 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.header("🖼️ 2. Cabeçalho (Topo do Catálogo)")
 
-usar_banner_imagem = st.sidebar.checkbox(
-    "Usar Imagem/Banner Pronto no Cabeçalho",
-    value=False,
-    help="Marque para enviar uma arte completa que substituirá o Logo e as Frases do Topo."
+# --- BUSCA AUTOMÁTICA DE BANNERS COM 'banner_*' ---
+arquivos_banners = sorted(
+    glob.glob("banner_*.png") + glob.glob("banner_*.jpg") + glob.glob("banner_*.jpeg")
 )
 
-banner_header_file = None
-frase_1, frase_2 = "", ""
-alinh_1, cor_1, tam_1, fonte_1 = "Esquerda", "#D32F2F", 34, "Padrão Negrito (Liberation / Arial)"
-alinh_2, cor_2, tam_2, fonte_2 = "Esquerda", "#1E1E1E", 20, "Padrão Negrito (Liberation / Arial)"
+# Monta o dicionário com os nomes amigáveis para exibir no menu
+dicio_banners = {}
+for caminho in arquivos_banners:
+    nome_base = os.path.basename(caminho)
+    # Remove 'banner_' do inicio e extesão do final para ficar legível
+    nome_limpo = re.sub(r"^banner_", "", nome_base, flags=re.IGNORECASE)
+    nome_limpo = os.path.splitext(nome_limpo)[0].replace("_", " ").title()
+    dicio_banners[f"📁 {nome_limpo}"] = caminho
 
-if usar_banner_imagem:
-    banner_header_file = st.sidebar.file_uploader(
+opcoes_cabecalho = ["Nenhum (Usar Logo e Frases)", "📤 Upload Manual de Banner"] + list(dicio_banners.keys())
+
+opcao_banner_selecionada = st.sidebar.selectbox(
+    "Escolha o Modelo do Cabeçalho",
+    opcoes_cabecalho,
+    index=0
+)
+
+banner_imagem_ativa = None  # Objeto de Imagem do PIL que será desenhado se existir
+
+if opcao_banner_selecionada == "📤 Upload Manual de Banner":
+    uploaded_banner = st.sidebar.file_uploader(
         "Upload do Banner do Cabeçalho",
         type=["png", "jpg", "jpeg"],
         help="Recomendado: Imagem retangular (ex: 1200x220px)."
     )
-else:
+    if uploaded_banner:
+        banner_imagem_ativa = Image.open(uploaded_banner).convert("RGBA")
+        st.sidebar.image(banner_imagem_ativa, caption="🔍 Pré-visualização do Banner Manual", use_container_width=True)
+
+elif opcao_banner_selecionada in dicio_banners:
+    caminho_banner = dicio_banners[opcao_banner_selecionada]
+    if os.path.exists(caminho_banner):
+        banner_imagem_ativa = Image.open(caminho_banner).convert("RGBA")
+        st.sidebar.image(banner_imagem_ativa, caption="🔍 Pré-visualização do Banner Selecionado", use_container_width=True)
+
+# Se NENHUM banner foi selecionado, exibe os controles de Logo e Textos
+if banner_imagem_ativa is None:
     st.sidebar.subheader("Logotipo")
     logo_uploaded = st.sidebar.file_uploader("Enviar novo Logo", type=["png", "jpg", "jpeg"])
 
@@ -272,7 +295,7 @@ else:
     
     # Frase 1
     frase_1 = st.sidebar.text_input("Frase Principal", "OFERTAS DA SEMANA")
-    fonte_1 = st.sidebar.selectbox("Estilo da Fonte Titulo Principal", list(OPCOES_FONTES.keys()), index=0)
+    fonte_1 = st.sidebar.selectbox("Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=0)
     col_a, col_b, col_c = st.sidebar.columns(3)
     with col_a:
         alinh_1 = st.selectbox("Alinhamento #1", ["Esquerda", "Centro", "Direita"], index=0)
@@ -284,7 +307,7 @@ else:
     # Frase 2
     st.sidebar.markdown("---")
     frase_2 = st.sidebar.text_input("Slogan / Subtítulo", "Preços Imbatíveis e Qualidade Garantida!")
-    fonte_2 = st.sidebar.selectbox("Estilo da Fonte Slogan", list(OPCOES_FONTES.keys()), index=1)
+    fonte_2 = st.sidebar.selectbox("Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=1)
     col_d, col_e, col_f = st.sidebar.columns(3)
     with col_d:
         alinh_2 = st.selectbox("Alinhamento #2", ["Esquerda", "Centro", "Direita"], index=0)
@@ -339,7 +362,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
         st.warning("Por favor, insira pelo menos um código na barra lateral.")
     else:
-        with st.spinner("Buscando dados e aplicando tipografia..."):
+        with st.spinner("Buscando dados e aplicando cabeçalho e fundo..."):
             produtos_carregados = []
 
             for item in produtos_inputs:
@@ -379,11 +402,12 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             draw = ImageDraw.Draw(catalogo)
 
             # --- 1. CABEÇALHO ---
-            if usar_banner_imagem and banner_header_file:
-                banner_img = Image.open(banner_header_file).convert("RGBA")
-                banner_resized = banner_img.resize((LARGURA_MAX, ALTURA_CABECALHO - 15), Image.Resampling.LANCZOS)
+            if banner_imagem_ativa:
+                # Caso tenha selecionado um banner (seja do GitHub ou por Upload Manual)
+                banner_resized = banner_imagem_ativa.resize((LARGURA_MAX, ALTURA_CABECALHO - 15), Image.Resampling.LANCZOS)
                 catalogo.paste(banner_resized, (0, 0), banner_resized)
             else:
+                # Caso tenha escolhido usar Logo + Textos dinâmicos
                 x_inicio_texto = 40
                 if os.path.exists(LOGO_PATH):
                     logo_img = Image.open(LOGO_PATH).convert("RGBA")
