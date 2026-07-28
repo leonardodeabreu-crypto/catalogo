@@ -243,11 +243,9 @@ arquivos_banners = sorted(
     glob.glob("banner_*.png") + glob.glob("banner_*.jpg") + glob.glob("banner_*.jpeg")
 )
 
-# Monta o dicionário com os nomes amigáveis para exibir no menu
 dicio_banners = {}
 for caminho in arquivos_banners:
     nome_base = os.path.basename(caminho)
-    # Remove 'banner_' do inicio e extesão do final para ficar legível
     nome_limpo = re.sub(r"^banner_", "", nome_base, flags=re.IGNORECASE)
     nome_limpo = os.path.splitext(nome_limpo)[0].replace("_", " ").title()
     dicio_banners[f"📁 {nome_limpo}"] = caminho
@@ -260,7 +258,7 @@ opcao_banner_selecionada = st.sidebar.selectbox(
     index=0
 )
 
-banner_imagem_ativa = None  # Objeto de Imagem do PIL que será desenhado se existir
+banner_imagem_ativa = None
 
 if opcao_banner_selecionada == "📤 Upload Manual de Banner":
     uploaded_banner = st.sidebar.file_uploader(
@@ -293,7 +291,6 @@ if banner_imagem_ativa is None:
 
     st.sidebar.subheader("Textos do Topo")
     
-    # Frase 1
     frase_1 = st.sidebar.text_input("Frase Principal", "OFERTAS DA SEMANA")
     fonte_1 = st.sidebar.selectbox("Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=0)
     col_a, col_b, col_c = st.sidebar.columns(3)
@@ -304,7 +301,6 @@ if banner_imagem_ativa is None:
     with col_c:
         tam_1 = st.slider("Tam #1", 16, 60, 34)
 
-    # Frase 2
     st.sidebar.markdown("---")
     frase_2 = st.sidebar.text_input("Slogan / Subtítulo", "Preços Imbatíveis e Qualidade Garantida!")
     fonte_2 = st.sidebar.selectbox("Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=1)
@@ -345,14 +341,22 @@ num_produtos = st.sidebar.number_input("Quantidade de Produtos", min_value=1, ma
 
 produtos_inputs = []
 for i in range(num_produtos):
+    st.sidebar.markdown(f"**Produto #{i+1}**")
     col1, col2 = st.sidebar.columns([2, 2])
     with col1:
         cod = st.text_input(f"COD. #{i+1}", key=f"cod_{i}")
     with col2:
         desc = st.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
 
+    # Campo opcional de Validade
+    val = st.sidebar.text_input(f"Validade Ex: val: 08/08/2026", key=f"val_{i}")
+
     if cod.strip():
-        produtos_inputs.append({"codigo": cod.strip(), "desconto": desc.strip()})
+        produtos_inputs.append({
+            "codigo": cod.strip(),
+            "desconto": desc.strip(),
+            "validade": val.strip()
+        })
 
 
 # ==========================================
@@ -374,6 +378,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 dados["imagem"] = img
                 dados["desconto"] = item["desconto"]
+                dados["validade"] = item["validade"]
                 produtos_carregados.append(dados)
                 time.sleep(0.1)
 
@@ -403,11 +408,9 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             # --- 1. CABEÇALHO ---
             if banner_imagem_ativa:
-                # Caso tenha selecionado um banner (seja do GitHub ou por Upload Manual)
                 banner_resized = banner_imagem_ativa.resize((LARGURA_MAX, ALTURA_CABECALHO - 15), Image.Resampling.LANCZOS)
                 catalogo.paste(banner_resized, (0, 0), banner_resized)
             else:
-                # Caso tenha escolhido usar Logo + Textos dinâmicos
                 x_inicio_texto = 40
                 if os.path.exists(LOGO_PATH):
                     logo_img = Image.open(LOGO_PATH).convert("RGBA")
@@ -431,7 +434,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             # --- 2. CARDS E PRODUTOS ---
             fonte_prod_titulo = carregar_fonte("Padrão Negrito (Liberation / Arial)", 13)
-            fonte_prod_codigo = carregar_fonte("Padrão Negrito (Liberation / Arial)", 12)
+            fonte_prod_codigo = carregar_fonte("Padrão Negrito (Liberation / Arial)", 11)
 
             padding_card = 12
             card_w = largura_slot - (padding_card * 2)
@@ -464,7 +467,11 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 y_texto_base = card_y2 - 14 - altura_titulos - 18
                 y_cod = y_texto_base
 
+                # --- MONTAGEM DO CÓDIGO + VALIDADE (SE HOUVER) ---
                 texto_cod = f"COD: {prod['codigo']}"
+                if prod["validade"]:
+                    texto_cod += f" - {prod['validade']}"
+
                 bbox_cod = draw.textbbox((0, 0), texto_cod, font=fonte_prod_codigo)
                 w_cod = bbox_cod[2] - bbox_cod[0]
                 x_cod = card_x1 + (card_w - w_cod) // 2
