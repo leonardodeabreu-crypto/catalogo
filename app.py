@@ -20,13 +20,11 @@ st.set_page_config(
 # ==========================================
 # SISTEMA DE SENHA SIMPLES (4 DÍGITOS)
 # ==========================================
-SENHA_CORRETA = "2244"  # <-- Senha atualizada para 2244
+SENHA_CORRETA = "2244"
 
-# Inicializa o estado de acesso na sessão
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 
-# Se ainda não estiver autenticado, mostra apenas a tela de senha
 if not st.session_state["autenticado"]:
     st.title("🔒 Acesso Restrito")
     st.write("Digite a senha de 4 dígitos para acessar o gerador de catálogos.")
@@ -37,21 +35,69 @@ if not st.session_state["autenticado"]:
         if senha_digitada == SENHA_CORRETA:
             st.session_state["autenticado"] = True
             st.success("Acesso liberado!")
-            st.rerun()  # Recarrega a página para exibir o app
+            st.rerun()
         else:
             st.error("Senha incorreta. Tente novamente.")
 
-    # Interrompe a execução aqui para NÃO carregar o restante do sistema
     st.stop()
 
 
 # ==========================================
-# CÓDIGO DO SISTEMA (SÓ RODA SE ACERTAR A SENHA)
+# DOWNLOAD E GERENCIAMENTO DE FONTES
+# ==========================================
+FONTES_URLS = {
+    "Roboto Bold": "https://github.com/google/fonts/raw/main/ofl/roboto/static/Roboto-Bold.ttf",
+    "Montserrat Bold": "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-Bold.ttf",
+    "Bebas Neue": "https://github.com/google/fonts/raw/main/ofl/bebasneue/BebasNeue-Regular.ttf",
+    "Open Sans Bold": "https://github.com/google/fonts/raw/main/ofl/opensans/static/OpenSans-Bold.ttf",
+    "Oswald Bold": "https://github.com/google/fonts/raw/main/ofl/oswald/static/Oswald-Bold.ttf",
+    "Playfair Display (Elegante)": "https://github.com/google/fonts/raw/main/ofl/playfairdisplay/static/PlayfairDisplay-Bold.ttf",
+}
+
+def garantir_fonte_instalada(nome_fonte):
+    """Baixa a fonte do Google Fonts se não existir localmente."""
+    url = FONTES_URLS.get(nome_fonte)
+    if not url:
+        return None
+    
+    nome_arquivo = f"fonte_{re.sub(r'[^a-zA-Z0-9]', '_', nome_fonte)}.ttf"
+    
+    if not os.path.exists(nome_arquivo):
+        try:
+            res = requests.get(url, timeout=10)
+            if res.status_code == 200:
+                with open(nome_arquivo, "wb") as f:
+                    f.write(res.content)
+        except Exception:
+            return None
+            
+    return nome_arquivo if os.path.exists(nome_arquivo) else None
+
+def carregar_fonte(nome_fonte_desejada, tamanho):
+    """Carrega a fonte com fallback seguro para não quebrar a aplicação."""
+    arquivo_fonte = garantir_fonte_instalada(nome_fonte_desejada)
+    if arquivo_fonte:
+        try:
+            return ImageFont.truetype(arquivo_fonte, tamanho)
+        except Exception:
+            pass
+
+    # Fallbacks padrão do sistema Linux/Windows
+    for alt in ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf", "arial.ttf"]:
+        try:
+            return ImageFont.truetype(alt, tamanho)
+        except IOError:
+            continue
+            
+    return ImageFont.load_default()
+
+
+# ==========================================
+# CÓDIGO PRINCIPAL DO SISTEMA
 # ==========================================
 st.title("🥩 Gerador de Catálogo Promocional")
-st.write("Monte banners e catálogos profissionais com suporte a texturas e cabeçalhos em imagem.")
+st.write("Monte banners e catálogos profissionais com suporte a texturas e personalização de fontes.")
 
-# Botão opcional de Sair na barra lateral
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state["autenticado"] = False
     st.rerun()
@@ -74,7 +120,7 @@ OPCOES_CORES = {
 
 
 # ==========================================
-# FUNÇÕES DE SCRAPING E UTILITÁRIOS
+# FUNÇÕES DE SCRAPING E DESENHO
 # ==========================================
 def buscar_dados_produto(codigo_busca):
     url = f"https://www.fornecimentodireto.com.br/?busca={codigo_busca}"
@@ -143,10 +189,7 @@ def desenhar_selo_no_card(draw, texto_desconto, card_x2, card_y1, cor_fundo="#E5
     if not texto_desconto:
         return
 
-    try:
-        fonte_selo = ImageFont.truetype("arial.ttf", 13)
-    except IOError:
-        fonte_selo = ImageFont.load_default()
+    fonte_selo = carregar_fonte("Roboto Bold", 13)
 
     bbox = draw.textbbox((0, 0), texto_desconto, font=fonte_selo)
     text_w = bbox[2] - bbox[0]
@@ -169,14 +212,11 @@ def desenhar_selo_no_card(draw, texto_desconto, card_x2, card_y1, cor_fundo="#E5
     draw.text((x0 + padding_h, y0 + padding_v - 1), texto_desconto, fill=cor_texto, font=fonte_selo)
 
 
-def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, x_inicio=270, x_fim=1170):
+def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, nome_fonte="Roboto Bold", x_inicio=270, x_fim=1170):
     if not texto.strip():
         return y
 
-    try:
-        fonte = ImageFont.truetype("arial.ttf", tamanho)
-    except IOError:
-        fonte = ImageFont.load_default()
+    fonte = carregar_fonte(nome_fonte, tamanho)
 
     bbox = draw.textbbox((0, 0), texto, font=fonte)
     largura_texto = bbox[2] - bbox[0]
@@ -225,8 +265,8 @@ usar_banner_imagem = st.sidebar.checkbox(
 
 banner_header_file = None
 frase_1, frase_2 = "", ""
-alinh_1, cor_1, tam_1 = "Esquerda", "#D32F2F", 32
-alinh_2, cor_2, tam_2 = "Esquerda", "#1E1E1E", 20
+alinh_1, cor_1, tam_1, fonte_1 = "Esquerda", "#D32F2F", 32, "Roboto Bold"
+alinh_2, cor_2, tam_2, fonte_2 = "Esquerda", "#1E1E1E", 20, "Roboto Bold"
 
 if usar_banner_imagem:
     banner_header_file = st.sidebar.file_uploader(
@@ -247,16 +287,22 @@ else:
         st.sidebar.image(LOGO_PATH, width=100, caption="Logo Ativo")
 
     st.sidebar.subheader("Textos do Topo")
+    
+    # Frase 1
     frase_1 = st.sidebar.text_input("Frase Principal", "OFERTAS DA SEMANA")
+    fonte_1 = st.sidebar.selectbox("Fonte Titulo Principal", list(FONTES_URLS.keys()), index=0)
     col_a, col_b, col_c = st.sidebar.columns(3)
     with col_a:
         alinh_1 = st.selectbox("Alinhamento #1", ["Esquerda", "Centro", "Direita"], index=0)
     with col_b:
         cor_1 = OPCOES_CORES[st.selectbox("Cor #1", list(OPCOES_CORES.keys()), index=0)]
     with col_c:
-        tam_1 = st.slider("Tam #1", 16, 50, 32)
+        tam_1 = st.slider("Tam #1", 16, 60, 34)
 
-    frase_2 = st.sidebar.text_input("Slogan", "Preços Imbatíveis e Qualidade Garantida!")
+    # Frase 2
+    st.sidebar.markdown("---")
+    frase_2 = st.sidebar.text_input("Slogan / Subtítulo", "Preços Imbatíveis e Qualidade Garantida!")
+    fonte_2 = st.sidebar.selectbox("Fonte Slogan", list(FONTES_URLS.keys()), index=3)
     col_d, col_e, col_f = st.sidebar.columns(3)
     with col_d:
         alinh_2 = st.selectbox("Alinhamento #2", ["Esquerda", "Centro", "Direita"], index=0)
@@ -268,6 +314,7 @@ else:
 st.sidebar.markdown("---")
 st.sidebar.header("📝 3. Rodapé")
 frase_rodape = st.sidebar.text_input("Frase Rodapé", "Ofertas válidas enquanto durarem os estoques.")
+fonte_r = st.sidebar.selectbox("Fonte Rodapé", list(FONTES_URLS.keys()), index=0)
 col_g, col_h, col_i = st.sidebar.columns(3)
 with col_g:
     alinh_r = st.selectbox("Alinhamento Rodapé", ["Esquerda", "Centro", "Direita"], index=1)
@@ -310,7 +357,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
         st.warning("Por favor, insira pelo menos um código na barra lateral.")
     else:
-        with st.spinner("Buscando dados e aplicando fundo e cabeçalho..."):
+        with st.spinner("Buscando dados, baixando fontes e gerando o catálogo..."):
             produtos_carregados = []
 
             for item in produtos_inputs:
@@ -340,7 +387,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             largura_slot = LARGURA_MAX // cols
             altura_slot = altura_area_produtos // linhas
 
-            # --- BASE DO CATÁLOGO (FUNDO / BACKGROUND) ---
+            # --- BASE DO CATÁLOGO (FUNDO) ---
             if "Personalizada" in tipo_fundo and bg_custom_file:
                 bg_img = Image.open(bg_custom_file).convert("RGBA")
                 catalogo = bg_img.resize((LARGURA_MAX, ALTURA_MAX), Image.Resampling.LANCZOS)
@@ -366,23 +413,19 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     )
                     x_inicio_texto = 270
 
-                y_texto = 50
+                y_texto = 45
                 y_texto = desenhar_texto_alinhado(
-                    draw, frase_1.upper(), y_texto, cor_1, tam_1, alinh_1, x_inicio=x_inicio_texto
+                    draw, frase_1.upper(), y_texto, cor_1, tam_1, alinh_1, nome_fonte=fonte_1, x_inicio=x_inicio_texto
                 )
                 desenhar_texto_alinhado(
-                    draw, frase_2, y_texto + 5, cor_2, tam_2, alinh_2, x_inicio=x_inicio_texto
+                    draw, frase_2, y_texto + 5, cor_2, tam_2, alinh_2, nome_fonte=fonte_2, x_inicio=x_inicio_texto
                 )
 
             draw.line([(30, ALTURA_CABECALHO - 15), (1170, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
 
             # --- 2. CARDS E PRODUTOS ---
-            try:
-                fonte_prod_titulo = ImageFont.truetype("arial.ttf", 13)
-                fonte_prod_codigo = ImageFont.truetype("arial.ttf", 12)
-            except IOError:
-                fonte_prod_titulo = ImageFont.load_default()
-                fonte_prod_codigo = ImageFont.load_default()
+            fonte_prod_titulo = carregar_fonte("Roboto Bold", 13)
+            fonte_prod_codigo = carregar_fonte("Roboto Bold", 12)
 
             padding_card = 12
             card_w = largura_slot - (padding_card * 2)
@@ -449,7 +492,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             draw.line([(30, y_rodape - 5), (1170, y_rodape - 5)], fill="#CCCCCC", width=2)
 
             desenhar_texto_alinhado(
-                draw, frase_rodape, y_rodape + 10, cor_r, tam_r, alinh_r, x_inicio=30, x_fim=1170
+                draw, frase_rodape, y_rodape + 10, cor_r, tam_r, alinh_r, nome_fonte=fonte_r, x_inicio=30, x_fim=1170
             )
 
             # --- EXIBIÇÃO FINAL ---
