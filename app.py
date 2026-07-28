@@ -17,8 +17,44 @@ st.set_page_config(
     layout="wide",
 )
 
+# ==========================================
+# SISTEMA DE SENHA SIMPLES (4 DÍGITOS)
+# ==========================================
+SENHA_CORRETA = "2244"  # <-- Senha atualizada para 2244
+
+# Inicializa o estado de acesso na sessão
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+# Se ainda não estiver autenticado, mostra apenas a tela de senha
+if not st.session_state["autenticado"]:
+    st.title("🔒 Acesso Restrito")
+    st.write("Digite a senha de 4 dígitos para acessar o gerador de catálogos.")
+
+    senha_digitada = st.text_input("Senha de Acesso", type="password", max_chars=4)
+
+    if st.button("Entrar"):
+        if senha_digitada == SENHA_CORRETA:
+            st.session_state["autenticado"] = True
+            st.success("Acesso liberado!")
+            st.rerun()  # Recarrega a página para exibir o app
+        else:
+            st.error("Senha incorreta. Tente novamente.")
+
+    # Interrompe a execução aqui para NÃO carregar o restante do sistema
+    st.stop()
+
+
+# ==========================================
+# CÓDIGO DO SISTEMA (SÓ RODA SE ACERTAR A SENHA)
+# ==========================================
 st.title("🥩 Gerador de Catálogo Promocional")
 st.write("Monte banners e catálogos profissionais com suporte a texturas e cabeçalhos em imagem.")
+
+# Botão opcional de Sair na barra lateral
+if st.sidebar.button("🚪 Sair do Sistema"):
+    st.session_state["autenticado"] = False
+    st.rerun()
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -94,7 +130,6 @@ def baixar_imagem(url):
 
 
 def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
-    """Redimensiona mantendo a proporção exata, permitindo zoom controlado."""
     w_orig, h_orig = img.size
     fator_base = min(max_w / w_orig, max_h / h_orig)
     fator_final = fator_base * fator_zoom
@@ -105,7 +140,6 @@ def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
 
 
 def desenhar_selo_no_card(draw, texto_desconto, card_x2, card_y1, cor_fundo="#E53935", cor_texto="white"):
-    """Desenha a flag de desconto no canto superior direito do BOX BRANCO."""
     if not texto_desconto:
         return
 
@@ -151,7 +185,7 @@ def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, x_inicio=
         x = x_inicio
     elif alinhamento == "Centro":
         x = x_inicio + ((x_fim - x_inicio) - largura_texto) // 2
-    else:  # Direita
+    else:
         x = x_fim - largura_texto
 
     draw.text((x, y), texto, fill=cor, font=fonte)
@@ -315,7 +349,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             draw = ImageDraw.Draw(catalogo)
 
-            # --- 1. CABEÇALHO (MODO BANNER OU MODO TEXTO+LOGO) ---
+            # --- 1. CABEÇALHO ---
             if usar_banner_imagem and banner_header_file:
                 banner_img = Image.open(banner_header_file).convert("RGBA")
                 banner_resized = banner_img.resize((LARGURA_MAX, ALTURA_CABECALHO - 15), Image.Resampling.LANCZOS)
@@ -342,7 +376,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             draw.line([(30, ALTURA_CABECALHO - 15), (1170, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
 
-            # --- 2. CARDS ARREDONDADOS E PRODUTOS ---
+            # --- 2. CARDS E PRODUTOS ---
             try:
                 fonte_prod_titulo = ImageFont.truetype("arial.ttf", 13)
                 fonte_prod_codigo = ImageFont.truetype("arial.ttf", 12)
@@ -366,7 +400,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 card_x2 = card_x1 + card_w
                 card_y2 = card_y1 + card_h
 
-                # 1. Desenha o Card Branco
                 draw.rounded_rectangle(
                     [card_x1, card_y1, card_x2, card_y2],
                     radius=14,
@@ -375,7 +408,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     width=1,
                 )
 
-                # 2. CALCULAR TEXTOS DA PARTE INFERIOR
                 char_limite = max(12, card_w // 11)
                 titulos_wrapped = textwrap.wrap(prod["titulo"], width=char_limite)[:2]
 
@@ -383,14 +415,12 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 y_texto_base = card_y2 - 14 - altura_titulos - 18
                 y_cod = y_texto_base
 
-                # Desenha Código
                 texto_cod = f"COD: {prod['codigo']}"
                 bbox_cod = draw.textbbox((0, 0), texto_cod, font=fonte_prod_codigo)
                 w_cod = bbox_cod[2] - bbox_cod[0]
                 x_cod = card_x1 + (card_w - w_cod) // 2
                 draw.text((x_cod, y_cod), texto_cod, fill="#222222", font=fonte_prod_codigo)
 
-                # Desenha Título
                 y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4
                 for t_linha in titulos_wrapped:
                     bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
@@ -399,7 +429,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     draw.text((x_tit, y_t), t_linha, fill="#444444", font=fonte_prod_titulo)
                     y_t += 15
 
-                # 3. REDIMENSIONAR E POSICIONAR A FOTO NA ÁREA RESTANTE
                 area_foto_top = card_y1 + 10
                 area_foto_bottom = y_cod - 8
                 max_foto_h = area_foto_bottom - area_foto_top
@@ -412,7 +441,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 catalogo.paste(img_p, (pos_x, pos_y), img_p)
 
-                # 4. DESENHA A FLAG DE DESCONTO NO CANTO SUPERIOR DIREITO DO CARD BRANCO
                 if prod["desconto"]:
                     desenhar_selo_no_card(draw, prod["desconto"], card_x2, card_y1)
 
