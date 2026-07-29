@@ -226,7 +226,6 @@ bg_custom_file = None
 cor_fundo_catalogo = "#F0F2F5"
 
 if tipo_fundo == "Cor Sólida / Hexadecimal":
-    # Permite colar o código HEX ou escolher visualmente na paleta
     cor_fundo_catalogo = st.sidebar.color_picker(
         "Escolha ou Cole a Cor Hexadecimal (#HEX)",
         value="#F0F2F5",
@@ -341,7 +340,13 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-num_produtos = st.sidebar.number_input("Quantidade de Produtos", min_value=1, max_value=15, value=9, step=1)
+# --- SELETOR DE QUANTIDADE RESTRITO ÀS REGRAS SOLICITADAS ---
+OPCOES_QUANTIDADE = [3, 6, 9, 12, 16]
+num_produtos = st.sidebar.selectbox(
+    "Quantidade de Produtos",
+    OPCOES_QUANTIDADE,
+    index=2  # Padrão: 9 produtos
+)
 
 produtos_inputs = []
 for i in range(num_produtos):
@@ -387,8 +392,22 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            cols = total if total <= 3 else 3
-            linhas = (total + cols - 1) // cols
+            # --- DEFINIÇÃO DO GRID DE ACORDO COM AS REGRAS SOLICITADAS ---
+            if total <= 3:
+                cols = 3
+                linhas = 1
+            elif total <= 6:
+                cols = 3
+                linhas = 2
+            elif total <= 9:
+                cols = 3
+                linhas = 3
+            elif total <= 12:
+                cols = 4
+                linhas = 3
+            else:  # Max 16
+                cols = 4
+                linhas = 4
 
             LARGURA_MAX = 1200
             ALTURA_MAX = 1200
@@ -436,10 +455,14 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             draw.line([(30, ALTURA_CABECALHO - 15), (1170, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
 
             # --- 2. CARDS E PRODUTOS ---
-            fonte_prod_titulo = carregar_fonte("Padrão Negrito (Liberation / Arial)", 13)
-            fonte_prod_codigo = carregar_fonte("Padrão Negrito (Liberation / Arial)", 11)
+            # Para grids de 12 ou 16 produtos, ajusta sutilmente o tamanho das fontes para caber perfeitamente
+            tamanho_fonte_tit = 11 if cols == 4 else 13
+            tamanho_fonte_cod = 10 if cols == 4 else 11
 
-            padding_card = 12
+            fonte_prod_titulo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit)
+            fonte_prod_codigo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tamanho_fonte_cod)
+
+            padding_card = 8 if cols == 4 else 12
             card_w = largura_slot - (padding_card * 2)
             card_h = altura_slot - (padding_card * 2)
 
@@ -457,17 +480,17 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 draw.rounded_rectangle(
                     [card_x1, card_y1, card_x2, card_y2],
-                    radius=14,
+                    radius=12 if cols == 4 else 14,
                     fill="white",
                     outline="#E0E0E0",
                     width=1,
                 )
 
-                char_limite = max(12, card_w // 11)
+                char_limite = max(10, card_w // 10)
                 titulos_wrapped = textwrap.wrap(prod["titulo"], width=char_limite)[:2]
 
-                altura_titulos = len(titulos_wrapped) * 15
-                y_texto_base = card_y2 - 14 - altura_titulos - 18
+                altura_titulos = len(titulos_wrapped) * (13 if cols == 4 else 15)
+                y_texto_base = card_y2 - 10 - altura_titulos - 16
                 y_cod = y_texto_base
 
                 # --- MONTAGEM DO CÓDIGO + VALIDADE (SE HOUVER) ---
@@ -480,18 +503,18 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 x_cod = card_x1 + (card_w - w_cod) // 2
                 draw.text((x_cod, y_cod), texto_cod, fill="#222222", font=fonte_prod_codigo)
 
-                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4
+                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 3
                 for t_linha in titulos_wrapped:
                     bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
                     w_tit = bbox_tit[2] - bbox_tit[0]
                     x_tit = card_x1 + (card_w - w_tit) // 2
                     draw.text((x_tit, y_t), t_linha, fill="#444444", font=fonte_prod_titulo)
-                    y_t += 15
+                    y_t += (13 if cols == 4 else 15)
 
-                area_foto_top = card_y1 + 10
-                area_foto_bottom = y_cod - 8
+                area_foto_top = card_y1 + 8
+                area_foto_bottom = y_cod - 6
                 max_foto_h = area_foto_bottom - area_foto_top
-                max_foto_w = card_w - 20
+                max_foto_w = card_w - 16
 
                 img_p = redimensionar_proporcional(prod["imagem"], max_foto_w, max_foto_h, fator_zoom=fator_zoom)
 
