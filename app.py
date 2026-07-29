@@ -219,15 +219,19 @@ def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, estilo_fo
 st.sidebar.header("🎨 1. Fundo do Catálogo (Background)")
 tipo_fundo = st.sidebar.radio(
     "Escolha o Tipo de Fundo",
-    ["Cor Sólida", "Imagem / Textura Personalizada (Madeira, etc.)"]
+    ["Cor Sólida / Hexadecimal", "Imagem / Textura Personalizada (Madeira, etc.)"]
 )
 
 bg_custom_file = None
 cor_fundo_catalogo = "#F0F2F5"
 
-if tipo_fundo == "Cor Sólida":
-    nome_cor = st.sidebar.selectbox("Cor do Fundo", list(OPCOES_CORES.keys()), index=6)
-    cor_fundo_catalogo = OPCOES_CORES[nome_cor]
+if tipo_fundo == "Cor Sólida / Hexadecimal":
+    # Permite colar o código HEX ou escolher visualmente na paleta
+    cor_fundo_catalogo = st.sidebar.color_picker(
+        "Escolha ou Cole a Cor Hexadecimal (#HEX)",
+        value="#F0F2F5",
+        help="Você pode digitar diretamente o código hexadecimal do marketing (Ex: #FF5733, #1A2B3C)."
+    )
 else:
     bg_custom_file = st.sidebar.file_uploader(
         "Upload de Textura/Imagem de Fundo",
@@ -348,7 +352,6 @@ for i in range(num_produtos):
     with col2:
         desc = st.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
 
-    # Campo opcional de Validade
     val = st.sidebar.text_input(f"Validade Ex: val: 08/08/2026", key=f"val_{i}")
 
     if cod.strip():
