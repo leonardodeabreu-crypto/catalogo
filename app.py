@@ -363,8 +363,29 @@ for i in range(num_produtos):
         produtos_inputs.append({
             "codigo": cod.strip(),
             "desconto": desc.strip(),
-            "validade": val.strip()
+            "validade": val.strip(),
+            "cod_parana": "" # Inicializa campo
         })
+
+# --- MODO PARANÁ (NOVO RECURSO) ---
+st.sidebar.markdown("---")
+modo_parana = st.sidebar.checkbox(
+    "🌲 Modo Paraná (Substituir Códigos)",
+    value=False,
+    help="Ative para exibir um campo manual onde você pode digitar o código do PR para aparecer na imagem final."
+)
+
+if modo_parana and produtos_inputs:
+    st.sidebar.subheader("🔑 Códigos do Paraná (PR)")
+    st.sidebar.caption("O sistema usará o código original para buscar a foto e o título no site, mas usará o código abaixo na arte final.")
+    
+    for idx, prod in enumerate(produtos_inputs):
+        cod_pr = st.sidebar.text_input(
+            f"Código PR p/ Prod #{idx+1} (Busca: {prod['codigo']})",
+            key=f"cod_pr_{idx}",
+            help=f"Código público usado para busca: {prod['codigo']}"
+        )
+        produtos_inputs[idx]["cod_parana"] = cod_pr.strip()
 
 
 # ==========================================
@@ -387,6 +408,11 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 dados["imagem"] = img
                 dados["desconto"] = item["desconto"]
                 dados["validade"] = item["validade"]
+                
+                # Se o Modo PR estiver ativado e um código PR tiver sido preenchido, ele sobrepõe o código original no Card
+                if modo_parana and item["cod_parana"]:
+                    dados["codigo"] = item["cod_parana"]
+
                 produtos_carregados.append(dados)
                 time.sleep(0.1)
 
@@ -455,7 +481,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             draw.line([(30, ALTURA_CABECALHO - 15), (1170, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
 
             # --- 2. CARDS E PRODUTOS ---
-            # Para grids de 12 ou 16 produtos, ajusta sutilmente o tamanho das fontes para caber perfeitamente
             tamanho_fonte_tit = 11 if cols == 4 else 13
             tamanho_fonte_cod = 10 if cols == 4 else 11
 
