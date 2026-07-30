@@ -317,10 +317,9 @@ if banner_imagem_ativa is None:
 
 st.sidebar.markdown("---")
 
-# --- CONTROLE DO BACKGROUND (VERIFICA COR VINCULADA AO BANNER) ---
+# --- CONTROLE DO BACKGROUND ---
 st.sidebar.header("🎨 2. Fundo do Catálogo (Background)")
 
-# Checa se o banner selecionado possui uma cor fixa cadastrada
 cor_vinculada_ao_banner = dict_cores_banners.get(arquivo_banner_ativo_nome) if arquivo_banner_ativo_nome else None
 
 tipo_fundo = st.sidebar.radio(
@@ -363,7 +362,6 @@ with col_i:
 st.sidebar.markdown("---")
 st.sidebar.header("🛒 4. Cadastro de Produtos")
 
-# --- ZOOM AJUSTADO PARA INICIAR EM 100 ---
 zoom_porcentagem = st.sidebar.slider(
     "🔍 Zoom da Imagem do Produto",
     min_value=100,
@@ -374,11 +372,12 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-OPCOES_QUANTIDADE = [3, 6, 9, 12, 16]
+# --- REMOVIDA A OPÇÃO DE 3 PRODUTOS ---
+OPCOES_QUANTIDADE = [6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
     "Quantidade de Produtos",
     OPCOES_QUANTIDADE,
-    index=2
+    index=0  # Padrão: 6 produtos
 )
 
 produtos_inputs = []
@@ -424,7 +423,7 @@ if modo_parana and produtos_inputs:
 # --- GERENCIADOR: BANNERS CORES ---
 st.sidebar.markdown("---")
 with st.sidebar.expander("🎨 Configurar Cores dos Banners"):
-    st.write("Vincule uma cor Hexadecimal a cada arquivo de banner para que ela seja aplicada automaticamente.")
+    st.write("Vincule uma cor Hexadecimal a cada arquivo de banner para que ela seja applied automaticamente.")
     
     if arquivos_banners:
         banner_para_config = st.selectbox(
@@ -484,10 +483,8 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            if total <= 3:
-                cols = 3
-                linhas = 1
-            elif total <= 6:
+            # --- LÓGICA DE GRID (MÍNIMO 6 PRODUTOS) ---
+            if total <= 6:
                 cols = 3
                 linhas = 2
             elif total <= 9:
