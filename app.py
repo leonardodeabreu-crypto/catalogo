@@ -313,12 +313,18 @@ def desenhar_texto_alinhado(
 # PAINEL LATERAL (CONTROLES)
 # ==========================================
 
-# Buscando arquivos da pasta /banners (se existir)
+# Mapeamento e varredura da pasta 'banners' (Case-Insensitive)
+pasta_banners = None
+for dir_item in os.listdir("."):
+    if dir_item.lower() == "banners" and os.path.isdir(dir_item):
+        pasta_banners = dir_item
+        break
+
 arquivos_banners = []
-if os.path.exists("banners"):
+if pasta_banners:
     arquivos_banners = [
-        os.path.join("banners", f)
-        for f in os.listdir("banners")
+        os.path.join(pasta_banners, f)
+        for f in os.listdir(pasta_banners)
         if f.lower().endswith((".png", ".jpg", ".jpeg"))
     ]
 
@@ -353,7 +359,8 @@ if opcao_banner_selecionada == "📤 Upload Manual de Banner":
 
 elif opcao_banner_selecionada.startswith("📁 "):
     nome_banner_atual = opcao_banner_selecionada.replace("📁 ", "")
-    caminho_banner = os.path.join("banners", nome_banner_atual)
+    caminho_banner = os.path.join(pasta_banners, nome_banner_atual) if pasta_banners else nome_banner_atual
+    
     if os.path.exists(caminho_banner):
         banner_imagem_ativa = Image.open(caminho_banner).convert("RGBA")
         st.sidebar.image(
@@ -417,7 +424,7 @@ if banner_imagem_ativa is None:
 st.sidebar.markdown("---")
 
 # ==========================================
-# 🎨 2. FUNDO DO CATÁLOGO (INTEGRADO COM O ADM)
+# 🎨 2. FUNDO DO CATÁLOGO
 # ==========================================
 st.sidebar.header("🎨 2. Fundo do Catálogo (Background)")
 
@@ -431,7 +438,6 @@ tipo_fundo = st.sidebar.radio(
 
 bg_custom_file = None
 
-# Cor padrão definida pelo ADM para o banner selecionado (se houver)
 cor_padrao_adm = "#F0F2F5"
 if nome_banner_atual and nome_banner_atual in dict_cores_banners:
     cor_padrao_adm = dict_cores_banners[nome_banner_atual]
@@ -450,7 +456,7 @@ else:
     )
 
 # ==========================================
-# 🔑 PAINEL EXCLUSIVO DO ADM (CONFIGURAÇÃO PERMANENTE)
+# 🔑 PAINEL EXCLUSIVO DO ADM
 # ==========================================
 st.sidebar.markdown("---")
 with st.sidebar.expander("🔑 Área do Administrador (Cores de Banners)"):
@@ -489,7 +495,7 @@ with st.sidebar.expander("🔑 Área do Administrador (Cores de Banners)"):
                 st.rerun()
         else:
             st.info(
-                "Crie a pasta 'banners' no repositório e adicione arquivos PNG/JPG para configurar."
+                "Crie a pasta 'banners' no repositório do GitHub e inclua os arquivos PNG ou JPG."
             )
     elif senha_adm_input != "":
         st.error("Senha de ADM incorreta.")
@@ -517,11 +523,12 @@ with col_i:
 st.sidebar.markdown("---")
 st.sidebar.header("🛒 4. Cadastro de Produtos")
 
+# FIX: ZOOM PADRÃO EM 100%
 zoom_porcentagem = st.sidebar.slider(
     "🔍 Zoom da Imagem do Produto",
     min_value=100,
     max_value=200,
-    value=110,
+    value=100,
     step=10,
 )
 fator_zoom = zoom_porcentagem / 100.0
