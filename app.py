@@ -250,7 +250,7 @@ for caminho in arquivos_banners:
 
 opcoes_cabecalho = ["Nenhum (Usar Logo e Frases)", "📤 Upload Manual de Banner"] + list(dicio_banners.keys())
 
-# --- MUDANÇA NA ORDEM: SELEÇÃO DE CABEÇALHO PRIMEIRO PARA DETECTAR A COR VINCULADA ---
+# --- SELEÇÃO DE CABEÇALHO ---
 st.sidebar.header("🖼️ 1. Cabeçalho (Topo do Catálogo)")
 
 opcao_banner_selecionada = st.sidebar.selectbox(
@@ -363,11 +363,12 @@ with col_i:
 st.sidebar.markdown("---")
 st.sidebar.header("🛒 4. Cadastro de Produtos")
 
+# --- ZOOM AJUSTADO PARA INICIAR EM 100 ---
 zoom_porcentagem = st.sidebar.slider(
     "🔍 Zoom da Imagem do Produto",
     min_value=100,
     max_value=180,
-    value=130,
+    value=100,
     step=10,
     help="Aumenta proporcionalmente a imagem aproveitando o espaço em branco do card.",
 )
@@ -420,7 +421,7 @@ if modo_parana and produtos_inputs:
         produtos_inputs[idx]["cod_parana"] = cod_pr.strip()
 
 
-# --- GERENCIADOR: BANNERS CORES (NOVO RECURSO SOLICITADO) ---
+# --- GERENCIADOR: BANNERS CORES ---
 st.sidebar.markdown("---")
 with st.sidebar.expander("🎨 Configurar Cores dos Banners"):
     st.write("Vincule uma cor Hexadecimal a cada arquivo de banner para que ela seja aplicada automaticamente.")
