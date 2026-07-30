@@ -19,7 +19,6 @@ st.set_page_config(
     layout="wide",
 )
 
-# Arquivo JSON para salvar o mapeamento de Cores dos Banners
 ARQUIVO_CORES_BANNERS = "cores_banners.json"
 
 def carregar_cores_banners():
@@ -73,7 +72,6 @@ OPCOES_FONTES = {
 }
 
 def carregar_fonte(estilo_escolhido, tamanho):
-    """Procura e carrega a melhor fonte vetorial disponível no sistema."""
     lista_fontes = OPCOES_FONTES.get(estilo_escolhido, ["LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf", "arial.ttf"])
     
     lista_fontes.extend([
@@ -147,8 +145,23 @@ def buscar_dados_produto(codigo_busca):
 
             img_tag = soup.find("img", class_="img-produto")
             if img_tag:
-                img_url = img_tag.get("data-src") or img_tag.get("src")
+                img_url = (
+                    img_tag.get("data-zoom-image")
+                    or img_tag.get("data-high-res-src")
+                    or img_tag.get("data-large")
+                    or img_tag.get("data-src")
+                    or img_tag.get("src")
+                )
+
+                parent_a = img_tag.find_parent("a")
+                if parent_a and parent_a.get("href") and parent_a["href"].endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                    img_url = parent_a["href"]
+
                 if img_url:
+                    img_url = re.sub(r"-\d+x\d+\.", ".", img_url)
+                    img_url = re.sub(r"_thumb\.", ".", img_url, flags=re.IGNORECASE)
+                    img_url = re.sub(r"_small\.", ".", img_url, flags=re.IGNORECASE)
+
                     if not img_url.startswith("http"):
                         img_url = (
                             "https://www.fornecimentodireto.com.br/"
@@ -167,9 +180,10 @@ def baixar_imagem(url):
     if not url:
         return None
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
+        response = requests.get(url, headers=HEADERS, timeout=12)
         if response.status_code == 200:
-            return Image.open(io.BytesIO(response.content)).convert("RGBA")
+            img = Image.open(io.BytesIO(response.content))
+            return img.convert("RGBA")
     except Exception:
         pass
     return None
@@ -180,8 +194,9 @@ def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
     fator_base = min(max_w / w_orig, max_h / h_orig)
     fator_final = fator_base * fator_zoom
 
-    novo_w = int(w_orig * fator_final)
-    novo_h = int(h_orig * fator_final)
+    novo_w = max(1, int(w_orig * fator_final))
+    novo_h = max(1, int(h_orig * fator_final))
+    
     return img.resize((novo_w, novo_h), Image.Resampling.LANCZOS)
 
 
@@ -236,7 +251,6 @@ def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, estilo_fo
 # PAINEL LATERAL (CONTROLES)
 # ==========================================
 
-# --- BUSCA AUTOMÁTICA DE BANNERS COM 'banner_*' ---
 arquivos_banners = sorted(
     glob.glob("banner_*.png") + glob.glob("banner_*.jpg") + glob.glob("banner_*.jpeg")
 )
@@ -250,7 +264,6 @@ for caminho in arquivos_banners:
 
 opcoes_cabecalho = ["Nenhum (Usar Logo e Frases)", "📤 Upload Manual de Banner"] + list(dicio_banners.keys())
 
-# --- SELEÇÃO DE CABEÇALHO ---
 st.sidebar.header("🖼️ 1. Cabeçalho (Topo do Catálogo)")
 
 opcao_banner_selecionada = st.sidebar.selectbox(
@@ -279,7 +292,6 @@ elif opcao_banner_selecionada in dicio_banners:
         banner_imagem_ativa = Image.open(caminho_banner).convert("RGBA")
         st.sidebar.image(banner_imagem_ativa, caption="🔍 Pré-visualização do Banner Selecionado", use_container_width=True)
 
-# Se NENHUM banner foi selecionado, exibe os controles de Logo e Textos
 if banner_imagem_ativa is None:
     st.sidebar.subheader("Logotipo")
     logo_uploaded = st.sidebar.file_uploader("Enviar novo Logo", type=["png", "jpg", "jpeg"])
@@ -317,7 +329,6 @@ if banner_imagem_ativa is None:
 
 st.sidebar.markdown("---")
 
-# --- CONTROLE DO BACKGROUND ---
 st.sidebar.header("🎨 2. Fundo do Catálogo (Background)")
 
 cor_vinculada_ao_banner = dict_cores_banners.get(arquivo_banner_ativo_nome) if arquivo_banner_ativo_nome else None
@@ -372,12 +383,12 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-# --- REMOVIDA A OPÇÃO DE 3 PRODUTOS ---
-OPCOES_QUANTIDADE = [6, 9, 12, 16]
+# --- REINCLUÍDA A OPÇÃO 3 ---
+OPCOES_QUANTIDADE = [3, 6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
     "Quantidade de Produtos",
     OPCOES_QUANTIDADE,
-    index=0  # Padrão: 6 produtos
+    index=2  # Padrão: 9 produtos
 )
 
 produtos_inputs = []
@@ -423,7 +434,7 @@ if modo_parana and produtos_inputs:
 # --- GERENCIADOR: BANNERS CORES ---
 st.sidebar.markdown("---")
 with st.sidebar.expander("🎨 Configurar Cores dos Banners"):
-    st.write("Vincule uma cor Hexadecimal a cada arquivo de banner para que ela seja applied automaticamente.")
+    st.write("Vincule uma cor Hexadecimal a cada arquivo de banner para que ela seja aplicada automaticamente.")
     
     if arquivos_banners:
         banner_para_config = st.selectbox(
@@ -461,7 +472,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
         st.warning("Por favor, insira pelo menos um código na barra lateral.")
     else:
-        with st.spinner("Buscando dados e aplicando cabeçalho e fundo..."):
+        with st.spinner("Buscando dados em alta resolução e gerando arte..."):
             produtos_carregados = []
 
             for item in produtos_inputs:
@@ -483,8 +494,11 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            # --- LÓGICA DE GRID (MÍNIMO 6 PRODUTOS) ---
-            if total <= 6:
+            # --- LÓGICA DE GRID (INCLUINDO 3 PRODUTOS) ---
+            if total <= 3:
+                cols = 3
+                linhas = 1
+            elif total <= 6:
                 cols = 3
                 linhas = 2
             elif total <= 9:
@@ -507,7 +521,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             largura_slot = LARGURA_MAX // cols
             altura_slot = altura_area_produtos // linhas
 
-            # --- BASE DO CATÁLOGO (FUNDO) ---
             if "Personalizada" in tipo_fundo and bg_custom_file:
                 bg_img = Image.open(bg_custom_file).convert("RGBA")
                 catalogo = bg_img.resize((LARGURA_MAX, ALTURA_MAX), Image.Resampling.LANCZOS)
@@ -629,12 +642,12 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             )
 
             buf = io.BytesIO()
-            catalogo_rgb.save(buf, format="PNG")
+            catalogo_rgb.save(buf, format="PNG", compress_level=1)
             byte_im = buf.getvalue()
 
             st.download_button(
-                label="💾 Baixar Imagem Gerada (PNG)",
+                label="💾 Baixar Imagem Gerada em Alta Qualidade (PNG)",
                 data=byte_im,
-                file_name="catalogo_promocional.png",
+                file_name="catalogo_promocional_hd.png",
                 mime="image/png",
             )
