@@ -48,12 +48,15 @@ def salvar_cores_banners(dados):
 dict_cores_banners = carregar_cores_banners()
 
 # ==========================================
-# SISTEMA DE SENHA SIMPLES (4 DÍGITOS)
+# SISTEMA DE SENHA ROBUSTO (MULTI-USUÁRIO)
 # ==========================================
 SENHA_CORRETA = "2244"
 
 if "autenticado" not in st.session_state:
-    st.session_state["autenticado"] = False
+    if st.query_params.get("auth") == "ok":
+        st.session_state["autenticado"] = True
+    else:
+        st.session_state["autenticado"] = False
 
 if not st.session_state["autenticado"]:
     st.title("🔒 Acesso Restrito")
@@ -66,6 +69,7 @@ if not st.session_state["autenticado"]:
     if st.button("Entrar"):
         if senha_digitada == SENHA_CORRETA:
             st.session_state["autenticado"] = True
+            st.query_params["auth"] = "ok"
             st.success("Acesso liberado!")
             st.rerun()
         else:
@@ -127,11 +131,13 @@ def carregar_fonte(estilo_escolhido, tamanho):
 # ==========================================
 st.title("🥩 Gerador de Catálogo Promocional")
 st.write(
-    "Monte banners e catálogos profissionais com fotos em alta definição!"
+    "Monte banners e catálogos profissionais com fotos limpas dos produtos!"
 )
 
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state["autenticado"] = False
+    if "auth" in st.query_params:
+        del st.query_params["auth"]
     st.rerun()
 
 LOGO_PATH = "logo_salvo.png"
@@ -149,7 +155,7 @@ OPCOES_CORES = {
 
 
 # ==========================================
-# SCRAPING COM BUSCA DA FOTO AMPLIADA (HD)
+# SCRAPING - BUSCA DA IMAGEM LIMPA DO PRODUTO (1.jpg)
 # ==========================================
 def buscar_dados_produto(codigo_busca):
     url = f"https://www.fornecimentodireto.com.br/?busca={codigo_busca}"
@@ -176,29 +182,34 @@ def buscar_dados_produto(codigo_busca):
 
             cod_real = dados["codigo"]
 
-            # --- BUSCA A FOTO AMPLIADA NO MODAL ---
-            try:
-                url_modal = f"https://www.fornecimentodireto.com.br/FotoProdutoAmpliar/{cod_real}"
-                headers_modal = HEADERS.copy()
-                headers_modal["X-Requested-With"] = "XMLHttpRequest"
-
-                res_hd = requests.get(
-                    url_modal, headers=headers_modal, timeout=5
+            # 1. Busca a tag <img> do produto da busca (imagem limpa, sem anúncios)
+            img_tag = soup.find("img", class_="img-produto") or soup.find("img")
+            if img_tag:
+                url_encontrada = (
+                    img_tag.get("data-src")
+                    or img_tag.get("data-zoom-image")
+                    or img_tag.get("src")
                 )
-                if res_hd.status_code == 200:
-                    soup_hd = BeautifulSoup(res_hd.content, "html.parser")
-                    img_hd = soup_hd.find("img", class_="img-produto-ampliada")
-                    if img_hd:
-                        dados["img_url"] = img_hd.get("data-src") or img_hd.get(
-                            "src"
-                        )
-            except Exception:
-                pass
 
-            # --- FALLBACK PARA LINK DE ALTA RESOLUÇÃO ---
+                if url_encontrada and not url_encontrada.endswith("load.gif"):
+                    # Remove restrições de dimensão (ex: ?w=120&h=120 ou /270x270/)
+                    url_limpa = re.sub(
+                        r"\?(width|height|w|h|dim)=\d+.*$", "", url_encontrada
+                    )
+                    url_limpa = re.sub(r"/(120|270)x(120|270)/", "/", url_limpa)
+
+                    if not url_limpa.startswith("http"):
+                        url_limpa = (
+                            "https://www.fornecimentodireto.com.br/"
+                            + url_limpa.lstrip("/")
+                        )
+
+                    dados["img_url"] = url_limpa
+
+            # 2. Fallback garantido: URL limpa do CDN do produto (versão /1.jpg)
             if not dados["img_url"]:
                 dados["img_url"] = (
-                    f"https://www.mercadoagora.com/arquivos/produtos/{cod_real}/2.jpg"
+                    f"https://www.mercadoagora.com/arquivos/produtos/{cod_real}/1.jpg"
                 )
 
             return dados
@@ -473,16 +484,16 @@ st.sidebar.header("🛒 4. Cadastro de Produtos")
 zoom_porcentagem = st.sidebar.slider(
     "🔍 Zoom da Imagem do Produto",
     min_value=100,
-    max_value=180,
-    value=100,
+    max_value=200,
+    value=110,
     step=10,
-    help="Aumenta proporcionalmente a imagem do produto no card.",
+    help="Aumenta proporcionalmente a foto limpa do produto no card.",
 )
 fator_zoom = zoom_porcentagem / 100.0
 
 OPCOES_QUANTIDADE = [1, 2, 3, 6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
-    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=3  # Padrão: 6 produtos
+    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=3
 )
 
 produtos_inputs = []
@@ -555,7 +566,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
         st.warning("Por favor, insira pelo menos um código na barra lateral.")
     else:
-        with st.spinner("Buscando imagens em ALTA DEFINIÇÃO e gerando arte..."):
+        with st.spinner("Buscando imagens limpas dos produtos e gerando arte..."):
             produtos_carregados = []
 
             for item in produtos_inputs:
