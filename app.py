@@ -83,7 +83,7 @@ def carregar_fonte(estilo_escolhido, tamanho):
 
     for nome_fonte in lista_fontes:
         try:
-            return ImageFont.truetype(nome_fonte, tamanho)
+            return ImageFont.truetype(nome_fonte, int(tamanho))
         except (IOError, OSError):
             continue
 
@@ -118,7 +118,7 @@ OPCOES_CORES = {
 
 
 # ==========================================
-# FUNÇÕES DE SCRAPING E DESENHO
+# FUNÇÕES DE SCRAPING E DESENHO (OTIMIZADO HD)
 # ==========================================
 def buscar_dados_produto(codigo_busca):
     url = f"https://www.fornecimentodireto.com.br/?busca={codigo_busca}"
@@ -143,31 +143,53 @@ def buscar_dados_produto(codigo_busca):
             if titulo_tag:
                 dados["titulo"] = titulo_tag.get_text(strip=True)
 
-            img_tag = soup.find("img", class_="img-produto")
-            if img_tag:
-                img_url = (
-                    img_tag.get("data-zoom-image")
-                    or img_tag.get("data-high-res-src")
-                    or img_tag.get("data-large")
-                    or img_tag.get("data-src")
-                    or img_tag.get("src")
-                )
-
-                parent_a = img_tag.find_parent("a")
-                if parent_a and parent_a.get("href") and parent_a["href"].endswith(('.png', '.jpg', '.jpeg', '.webp')):
-                    img_url = parent_a["href"]
-
-                if img_url:
-                    img_url = re.sub(r"-\d+x\d+\.", ".", img_url)
-                    img_url = re.sub(r"_thumb\.", ".", img_url, flags=re.IGNORECASE)
-                    img_url = re.sub(r"_small\.", ".", img_url, flags=re.IGNORECASE)
-
-                    if not img_url.startswith("http"):
-                        img_url = (
-                            "https://www.fornecimentodireto.com.br/"
-                            + img_url.lstrip("/")
+            # --- TENTATIVA 1: BUSCAR FOTO AMPLIADA (HD) VIA /FotoProdutoAmpliar/{codigo} ---
+            cod_real = dados["codigo"]
+            url_ampliada_modal = f"https://www.fornecimentodireto.com.br/FotoProdutoAmpliar/{cod_real}"
+            try:
+                res_hd = requests.get(url_ampliada_modal, headers=HEADERS, timeout=6)
+                if res_hd.status_code == 200:
+                    soup_hd = BeautifulSoup(res_hd.content, "html.parser")
+                    # Procura a classe 'img-produto-ampliada' informada
+                    img_hd_tag = soup_hd.find("img", class_="img-produto-ampliada") or soup_hd.find("img")
+                    if img_hd_tag:
+                        img_hd_url = (
+                            img_hd_tag.get("src")
+                            or img_hd_tag.get("data-src")
                         )
-                    dados["img_url"] = img_url
+                        if img_hd_url and not img_hd_url.endswith("load.gif"):
+                            if not img_hd_url.startswith("http"):
+                                img_hd_url = "https://www.fornecimentodireto.com.br/" + img_hd_url.lstrip("/")
+                            dados["img_url"] = img_hd_url
+            except Exception:
+                pass
+
+            # --- TENTATIVA 2: FALLBACK PARA A BUSCA PADRÃO CASO NÃO ACHE A HD ---
+            if not dados["img_url"]:
+                img_tag = soup.find("img", class_="img-produto")
+                if img_tag:
+                    img_url = (
+                        img_tag.get("data-src")
+                        or img_tag.get("data-zoom-image")
+                        or img_tag.get("data-high-res-src")
+                        or img_tag.get("src")
+                    )
+
+                    parent_a = img_tag.find_parent("a")
+                    if parent_a and parent_a.get("href") and parent_a["href"].endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                        img_url = parent_a["href"]
+
+                    if img_url and not img_url.endswith("load.gif"):
+                        img_url = re.sub(r"-\d+x\d+\.", ".", img_url)
+                        img_url = re.sub(r"_thumb\.", ".", img_url, flags=re.IGNORECASE)
+                        img_url = re.sub(r"_small\.", ".", img_url, flags=re.IGNORECASE)
+
+                        if not img_url.startswith("http"):
+                            img_url = (
+                                "https://www.fornecimentodireto.com.br/"
+                                + img_url.lstrip("/")
+                            )
+                        dados["img_url"] = img_url
 
             return dados
     except Exception as e:
@@ -200,18 +222,18 @@ def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
     return img.resize((novo_w, novo_h), Image.Resampling.LANCZOS)
 
 
-def desenhar_selo_no_card(draw, texto_desconto, card_x2, card_y1, cor_fundo="#E53935", cor_texto="white"):
+def desenhar_selo_no_card(draw, texto_desconto, card_x2, card_y1, cor_fundo="#E53935", cor_texto="white", tam_fonte=13):
     if not texto_desconto:
         return
 
-    fonte_selo = carregar_fonte("Padrão Negrito (Liberation / Arial)", 13)
+    fonte_selo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tam_fonte)
 
     bbox = draw.textbbox((0, 0), texto_desconto, font=fonte_selo)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
 
-    padding_h = 8
-    padding_v = 4
+    padding_h = max(8, int(tam_fonte * 0.6))
+    padding_v = max(4, int(tam_fonte * 0.3))
     selo_w = text_w + (padding_h * 2)
     selo_h = text_h + (padding_v * 2)
 
@@ -383,12 +405,11 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-# --- REINCLUÍDA A OPÇÃO 3 ---
-OPCOES_QUANTIDADE = [3, 6, 9, 12, 16]
+OPCOES_QUANTIDADE = [1, 2, 3, 6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
     "Quantidade de Produtos",
     OPCOES_QUANTIDADE,
-    index=2  # Padrão: 9 produtos
+    index=3  # Padrão: 6 produtos
 )
 
 produtos_inputs = []
@@ -472,7 +493,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
         st.warning("Por favor, insira pelo menos um código na barra lateral.")
     else:
-        with st.spinner("Buscando dados em alta resolução e gerando arte..."):
+        with st.spinner("Buscando dados em ALTA RESOLUÇÃO e gerando arte..."):
             produtos_carregados = []
 
             for item in produtos_inputs:
@@ -494,8 +515,14 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            # --- LÓGICA DE GRID (INCLUINDO 3 PRODUTOS) ---
-            if total <= 3:
+            # --- LÓGICA DE GRID ---
+            if total == 1:
+                cols = 1
+                linhas = 1
+            elif total == 2:
+                cols = 2
+                linhas = 1
+            elif total <= 3:
                 cols = 3
                 linhas = 1
             elif total <= 6:
@@ -556,8 +583,18 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             draw.line([(30, ALTURA_CABECALHO - 15), (1170, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
 
             # --- 2. CARDS E PRODUTOS ---
-            tamanho_fonte_tit = 11 if cols == 4 else 13
-            tamanho_fonte_cod = 10 if cols == 4 else 11
+            if total == 1:
+                tamanho_fonte_tit = int(13 * 1.30)
+                tamanho_fonte_cod = int(11 * 1.30)
+                tamanho_fonte_selo = int(13 * 1.30)
+            elif cols == 4:
+                tamanho_fonte_tit = 11
+                tamanho_fonte_cod = 10
+                tamanho_fonte_selo = 13
+            else:
+                tamanho_fonte_tit = 13
+                tamanho_fonte_cod = 11
+                tamanho_fonte_selo = 13
 
             fonte_prod_titulo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit)
             fonte_prod_codigo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tamanho_fonte_cod)
@@ -586,11 +623,12 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     width=1,
                 )
 
-                char_limite = max(10, card_w // 10)
+                char_limite = max(10, card_w // (14 if total == 1 else 10))
                 titulos_wrapped = textwrap.wrap(prod["titulo"], width=char_limite)[:2]
 
-                altura_titulos = len(titulos_wrapped) * (13 if cols == 4 else 15)
-                y_texto_base = card_y2 - 10 - altura_titulos - 16
+                espacamento_linha = int(tamanho_fonte_tit * 1.2)
+                altura_titulos = len(titulos_wrapped) * espacamento_linha
+                y_texto_base = card_y2 - 12 - altura_titulos - tamanho_fonte_cod
                 y_cod = y_texto_base
 
                 texto_cod = f"COD: {prod['codigo']}"
@@ -602,13 +640,13 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 x_cod = card_x1 + (card_w - w_cod) // 2
                 draw.text((x_cod, y_cod), texto_cod, fill="#222222", font=fonte_prod_codigo)
 
-                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 3
+                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4
                 for t_linha in titulos_wrapped:
                     bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
                     w_tit = bbox_tit[2] - bbox_tit[0]
                     x_tit = card_x1 + (card_w - w_tit) // 2
                     draw.text((x_tit, y_t), t_linha, fill="#444444", font=fonte_prod_titulo)
-                    y_t += (13 if cols == 4 else 15)
+                    y_t += espacamento_linha
 
                 area_foto_top = card_y1 + 8
                 area_foto_bottom = y_cod - 6
@@ -623,7 +661,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 catalogo.paste(img_p, (pos_x, pos_y), img_p)
 
                 if prod["desconto"]:
-                    desenhar_selo_no_card(draw, prod["desconto"], card_x2, card_y1)
+                    desenhar_selo_no_card(draw, prod["desconto"], card_x2, card_y1, tam_fonte=tamanho_fonte_selo)
 
             # --- 3. RODAPÉ ---
             y_rodape = ALTURA_MAX - ALTURA_RODAPE + 10
