@@ -3,6 +3,7 @@ import os
 import re
 import glob
 import time
+import json
 import textwrap
 import requests
 from bs4 import BeautifulSoup
@@ -17,6 +18,24 @@ st.set_page_config(
     page_icon="🥩",
     layout="wide",
 )
+
+# Arquivo JSON para salvar o mapeamento de Cores dos Banners
+ARQUIVO_CORES_BANNERS = "cores_banners.json"
+
+def carregar_cores_banners():
+    if os.path.exists(ARQUIVO_CORES_BANNERS):
+        try:
+            with open(ARQUIVO_CORES_BANNERS, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salvar_cores_banners(dados):
+    with open(ARQUIVO_CORES_BANNERS, "w", encoding="utf-8") as f:
+        json.dump(dados, f, ensure_ascii=False, indent=4)
+
+dict_cores_banners = carregar_cores_banners()
 
 # ==========================================
 # SISTEMA DE SENHA SIMPLES (4 DÍGITOS)
@@ -216,30 +235,6 @@ def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, estilo_fo
 # ==========================================
 # PAINEL LATERAL (CONTROLES)
 # ==========================================
-st.sidebar.header("🎨 1. Fundo do Catálogo (Background)")
-tipo_fundo = st.sidebar.radio(
-    "Escolha o Tipo de Fundo",
-    ["Cor Sólida / Hexadecimal", "Imagem / Textura Personalizada (Madeira, etc.)"]
-)
-
-bg_custom_file = None
-cor_fundo_catalogo = "#F0F2F5"
-
-if tipo_fundo == "Cor Sólida / Hexadecimal":
-    cor_fundo_catalogo = st.sidebar.color_picker(
-        "Escolha ou Cole a Cor Hexadecimal (#HEX)",
-        value="#F0F2F5",
-        help="Você pode digitar diretamente o código hexadecimal do marketing (Ex: #FF5733, #1A2B3C)."
-    )
-else:
-    bg_custom_file = st.sidebar.file_uploader(
-        "Upload de Textura/Imagem de Fundo",
-        type=["png", "jpg", "jpeg"],
-        help="Envie uma imagem de madeira, pedra ou textura para o fundo."
-    )
-
-st.sidebar.markdown("---")
-st.sidebar.header("🖼️ 2. Cabeçalho (Topo do Catálogo)")
 
 # --- BUSCA AUTOMÁTICA DE BANNERS COM 'banner_*' ---
 arquivos_banners = sorted(
@@ -255,6 +250,9 @@ for caminho in arquivos_banners:
 
 opcoes_cabecalho = ["Nenhum (Usar Logo e Frases)", "📤 Upload Manual de Banner"] + list(dicio_banners.keys())
 
+# --- MUDANÇA NA ORDEM: SELEÇÃO DE CABEÇALHO PRIMEIRO PARA DETECTAR A COR VINCULADA ---
+st.sidebar.header("🖼️ 1. Cabeçalho (Topo do Catálogo)")
+
 opcao_banner_selecionada = st.sidebar.selectbox(
     "Escolha o Modelo do Cabeçalho",
     opcoes_cabecalho,
@@ -262,6 +260,7 @@ opcao_banner_selecionada = st.sidebar.selectbox(
 )
 
 banner_imagem_ativa = None
+arquivo_banner_ativo_nome = None
 
 if opcao_banner_selecionada == "📤 Upload Manual de Banner":
     uploaded_banner = st.sidebar.file_uploader(
@@ -275,6 +274,7 @@ if opcao_banner_selecionada == "📤 Upload Manual de Banner":
 
 elif opcao_banner_selecionada in dicio_banners:
     caminho_banner = dicio_banners[opcao_banner_selecionada]
+    arquivo_banner_ativo_nome = os.path.basename(caminho_banner)
     if os.path.exists(caminho_banner):
         banner_imagem_ativa = Image.open(caminho_banner).convert("RGBA")
         st.sidebar.image(banner_imagem_ativa, caption="🔍 Pré-visualização do Banner Selecionado", use_container_width=True)
@@ -316,6 +316,39 @@ if banner_imagem_ativa is None:
         tam_2 = st.slider("Tam #2", 12, 40, 20)
 
 st.sidebar.markdown("---")
+
+# --- CONTROLE DO BACKGROUND (VERIFICA COR VINCULADA AO BANNER) ---
+st.sidebar.header("🎨 2. Fundo do Catálogo (Background)")
+
+# Checa se o banner selecionado possui uma cor fixa cadastrada
+cor_vinculada_ao_banner = dict_cores_banners.get(arquivo_banner_ativo_nome) if arquivo_banner_ativo_nome else None
+
+tipo_fundo = st.sidebar.radio(
+    "Escolha o Tipo de Fundo",
+    ["Cor Sólida / Hexadecimal", "Imagem / Textura Personalizada (Madeira, etc.)"]
+)
+
+bg_custom_file = None
+cor_fundo_catalogo = "#F0F2F5"
+
+if tipo_fundo == "Cor Sólida / Hexadecimal":
+    if cor_vinculada_ao_banner:
+        st.sidebar.info(f"🔒 **Cor Vinculada ao Banner:** `{cor_vinculada_ao_banner}`")
+        cor_fundo_catalogo = cor_vinculada_ao_banner
+    else:
+        cor_fundo_catalogo = st.sidebar.color_picker(
+            "Escolha ou Cole a Cor Hexadecimal (#HEX)",
+            value="#F0F2F5",
+            help="Você pode digitar diretamente o código hexadecimal do marketing (Ex: #FF5733, #1A2B3C)."
+        )
+else:
+    bg_custom_file = st.sidebar.file_uploader(
+        "Upload de Textura/Imagem de Fundo",
+        type=["png", "jpg", "jpeg"],
+        help="Envie uma imagem de madeira, pedra ou textura para o fundo."
+    )
+
+st.sidebar.markdown("---")
 st.sidebar.header("📝 3. Rodapé")
 frase_rodape = st.sidebar.text_input("Frase Rodapé", "Ofertas válidas enquanto durarem os estoques.")
 fonte_r = st.sidebar.selectbox("Estilo Fonte Rodapé", list(OPCOES_FONTES.keys()), index=0)
@@ -340,12 +373,11 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-# --- SELETOR DE QUANTIDADE RESTRITO ÀS REGRAS SOLICITADAS ---
 OPCOES_QUANTIDADE = [3, 6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
     "Quantidade de Produtos",
     OPCOES_QUANTIDADE,
-    index=2  # Padrão: 9 produtos
+    index=2
 )
 
 produtos_inputs = []
@@ -364,10 +396,10 @@ for i in range(num_produtos):
             "codigo": cod.strip(),
             "desconto": desc.strip(),
             "validade": val.strip(),
-            "cod_parana": "" # Inicializa campo
+            "cod_parana": ""
         })
 
-# --- MODO PARANÁ (NOVO RECURSO) ---
+# --- MODO PARANÁ ---
 st.sidebar.markdown("---")
 modo_parana = st.sidebar.checkbox(
     "🌲 Modo Paraná (Substituir Códigos)",
@@ -386,6 +418,40 @@ if modo_parana and produtos_inputs:
             help=f"Código público usado para busca: {prod['codigo']}"
         )
         produtos_inputs[idx]["cod_parana"] = cod_pr.strip()
+
+
+# --- GERENCIADOR: BANNERS CORES (NOVO RECURSO SOLICITADO) ---
+st.sidebar.markdown("---")
+with st.sidebar.expander("🎨 Configurar Cores dos Banners"):
+    st.write("Vincule uma cor Hexadecimal a cada arquivo de banner para que ela seja aplicada automaticamente.")
+    
+    if arquivos_banners:
+        banner_para_config = st.selectbox(
+            "Selecione o Banner",
+            [os.path.basename(b) for b in arquivos_banners],
+            key="select_banner_cor"
+        )
+        
+        cor_atual_salva = dict_cores_banners.get(banner_para_config, "#F0F2F5")
+        
+        cor_hex_input = st.text_input(
+            "Cor Hexadecimal (#HEX)",
+            value=cor_atual_salva,
+            key="input_hex_banner"
+        )
+        
+        if st.button("💾 Salvar Cor do Banner"):
+            dict_cores_banners[banner_para_config] = cor_hex_input.strip().upper()
+            salvar_cores_banners(dict_cores_banners)
+            st.success(f"Cor {cor_hex_input} salva para o banner!")
+            st.rerun()
+            
+        if dict_cores_banners:
+            st.markdown("**Cores Atualmente Vinculadas:**")
+            for b_name, b_color in dict_cores_banners.items():
+                st.caption(f"• `{b_name}`: **{b_color}**")
+    else:
+        st.warning("Nenhum arquivo `banner_*.png` encontrado na pasta.")
 
 
 # ==========================================
@@ -409,7 +475,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 dados["desconto"] = item["desconto"]
                 dados["validade"] = item["validade"]
                 
-                # Se o Modo PR estiver ativado e um código PR tiver sido preenchido, ele sobrepõe o código original no Card
                 if modo_parana and item["cod_parana"]:
                     dados["codigo"] = item["cod_parana"]
 
@@ -418,7 +483,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            # --- DEFINIÇÃO DO GRID DE ACORDO COM AS REGRAS SOLICITADAS ---
             if total <= 3:
                 cols = 3
                 linhas = 1
@@ -431,7 +495,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             elif total <= 12:
                 cols = 4
                 linhas = 3
-            else:  # Max 16
+            else:
                 cols = 4
                 linhas = 4
 
@@ -518,7 +582,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 y_texto_base = card_y2 - 10 - altura_titulos - 16
                 y_cod = y_texto_base
 
-                # --- MONTAGEM DO CÓDIGO + VALIDADE (SE HOUVER) ---
                 texto_cod = f"COD: {prod['codigo']}"
                 if prod["validade"]:
                     texto_cod += f" - {prod['validade']}"
