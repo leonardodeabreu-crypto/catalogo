@@ -1,4 +1,3 @@
-import glob
 import io
 import json
 import os
@@ -27,30 +26,36 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
-ARQUIVO_CORES_BANNERS = "cores_banners.json"
+SENHA_USUARIO = "2244"
+SENHA_ADM = "9988"
+ARQUIVO_CORES_JSON = "cores_banners.json"
 
-
+# ==========================================
+# GERENCIAMENTO DE CORES DOS BANNERS (ARQUIVO GLOBAL DO ADM)
+# ==========================================
 def carregar_cores_banners():
-    if os.path.exists(ARQUIVO_CORES_BANNERS):
+    if os.path.exists(ARQUIVO_CORES_JSON):
         try:
-            with open(ARQUIVO_CORES_BANNERS, "r", encoding="utf-8") as f:
+            with open(ARQUIVO_CORES_JSON, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return {}
     return {}
 
-
-def salvar_cores_banners(dados):
-    with open(ARQUIVO_CORES_BANNERS, "w", encoding="utf-8") as f:
-        json.dump(dados, f, ensure_ascii=False, indent=4)
-
+def salvar_cores_banners(dict_cores):
+    try:
+        with open(ARQUIVO_CORES_JSON, "w", encoding="utf-8") as f:
+            json.dump(dict_cores, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        st.error(f"Erro ao salvar cores do ADM: {e}")
 
 dict_cores_banners = carregar_cores_banners()
 
 # ==========================================
-# SISTEMA DE SENHA ROBUSTO (MULTI-USUÁRIO)
+# INICIALIZAÇÃO DA SESSÃO ISOLADA (POR USUÁRIO)
 # ==========================================
-SENHA_CORRETA = "2244"
+if "logo_bytes" not in st.session_state:
+    st.session_state["logo_bytes"] = None
 
 if "autenticado" not in st.session_state:
     if st.query_params.get("auth") == "ok":
@@ -58,16 +63,19 @@ if "autenticado" not in st.session_state:
     else:
         st.session_state["autenticado"] = False
 
+# ==========================================
+# TELA DE LOGIN DO SISTEMA
+# ==========================================
 if not st.session_state["autenticado"]:
     st.title("🔒 Acesso Restrito")
-    st.write("Digite a senha de 4 dígitos para acessar o gerador de catálogos.")
+    st.write("Digite a senha de acesso para utilizar o gerador de catálogos.")
 
     senha_digitada = st.text_input(
         "Senha de Acesso", type="password", max_chars=4
     )
 
     if st.button("Entrar"):
-        if senha_digitada == SENHA_CORRETA:
+        if senha_digitada == SENHA_USUARIO or senha_digitada == SENHA_ADM:
             st.session_state["autenticado"] = True
             st.query_params["auth"] = "ok"
             st.success("Acesso liberado!")
@@ -77,9 +85,8 @@ if not st.session_state["autenticado"]:
 
     st.stop()
 
-
 # ==========================================
-# GERENCIAMENTO DE FONTES ROBUSTO
+# GERENCIAMENTO DE FONTES
 # ==========================================
 OPCOES_FONTES = {
     "Padrão Negrito (Liberation / Arial)": [
@@ -103,7 +110,6 @@ OPCOES_FONTES = {
     ],
 }
 
-
 def carregar_fonte(estilo_escolhido, tamanho):
     lista_fontes = OPCOES_FONTES.get(
         estilo_escolhido,
@@ -125,22 +131,17 @@ def carregar_fonte(estilo_escolhido, tamanho):
 
     return ImageFont.load_default()
 
-
 # ==========================================
 # CÓDIGO PRINCIPAL DO SISTEMA
 # ==========================================
 st.title("🥩 Gerador de Catálogo Promocional")
-st.write(
-    "Monte banners e catálogos profissionais com fotos limpas dos produtos!"
-)
+st.write("Monte banners e catálogos profissionais com fotos limpas dos produtos!")
 
 if st.sidebar.button("🚪 Sair do Sistema"):
     st.session_state["autenticado"] = False
     if "auth" in st.query_params:
         del st.query_params["auth"]
     st.rerun()
-
-LOGO_PATH = "logo_salvo.png"
 
 OPCOES_CORES = {
     "Vermelho Oferta": "#D32F2F",
@@ -153,9 +154,8 @@ OPCOES_CORES = {
     "Branco": "#FFFFFF",
 }
 
-
 # ==========================================
-# SCRAPING - BUSCA DA IMAGEM LIMPA DO PRODUTO (1.jpg)
+# SCRAPING E MÉTODOS AUXILIARES
 # ==========================================
 def buscar_dados_produto(codigo_busca):
     url = f"https://www.fornecimentodireto.com.br/?busca={codigo_busca}"
@@ -182,7 +182,6 @@ def buscar_dados_produto(codigo_busca):
 
             cod_real = dados["codigo"]
 
-            # 1. Busca a tag <img> do produto da busca (imagem limpa, sem anúncios)
             img_tag = soup.find("img", class_="img-produto") or soup.find("img")
             if img_tag:
                 url_encontrada = (
@@ -192,7 +191,6 @@ def buscar_dados_produto(codigo_busca):
                 )
 
                 if url_encontrada and not url_encontrada.endswith("load.gif"):
-                    # Remove restrições de dimensão (ex: ?w=120&h=120 ou /270x270/)
                     url_limpa = re.sub(
                         r"\?(width|height|w|h|dim)=\d+.*$", "", url_encontrada
                     )
@@ -206,7 +204,6 @@ def buscar_dados_produto(codigo_busca):
 
                     dados["img_url"] = url_limpa
 
-            # 2. Fallback garantido: URL limpa do CDN do produto (versão /1.jpg)
             if not dados["img_url"]:
                 dados["img_url"] = (
                     f"https://www.mercadoagora.com/arquivos/produtos/{cod_real}/1.jpg"
@@ -312,35 +309,33 @@ def desenhar_texto_alinhado(
     draw.text((x, y), texto, fill=cor, font=fonte)
     return y + (bbox[3] - bbox[1]) + 8
 
-
 # ==========================================
 # PAINEL LATERAL (CONTROLES)
 # ==========================================
 
-arquivos_banners = sorted(
-    glob.glob("banner_*.png") + glob.glob("banner_*.jpg") + glob.glob("banner_*.jpeg")
-)
-
-dicio_banners = {}
-for caminho in arquivos_banners:
-    nome_base = os.path.basename(caminho)
-    nome_limpo = re.sub(r"^banner_", "", nome_base, flags=re.IGNORECASE)
-    nome_limpo = os.path.splitext(nome_limpo)[0].replace("_", " ").title()
-    dicio_banners[f"📁 {nome_limpo}"] = caminho
-
-opcoes_cabecalho = [
-    "Nenhum (Usar Logo e Frases)",
-    "📤 Upload Manual de Banner",
-] + list(dicio_banners.keys())
+# Buscando arquivos da pasta /banners (se existir)
+arquivos_banners = []
+if os.path.exists("banners"):
+    arquivos_banners = [
+        os.path.join("banners", f)
+        for f in os.listdir("banners")
+        if f.lower().endswith((".png", ".jpg", ".jpeg"))
+    ]
 
 st.sidebar.header("🖼️ 1. Cabeçalho (Topo do Catálogo)")
+
+opcoes_cabecalho = ["Nenhum (Usar Logo e Frases)", "📤 Upload Manual de Banner"]
+if arquivos_banners:
+    opcoes_cabecalho.extend(
+        [f"📁 {os.path.basename(b)}" for b in arquivos_banners]
+    )
 
 opcao_banner_selecionada = st.sidebar.selectbox(
     "Escolha o Modelo do Cabeçalho", opcoes_cabecalho, index=0
 )
 
 banner_imagem_ativa = None
-arquivo_banner_ativo_nome = None
+nome_banner_atual = None
 
 if opcao_banner_selecionada == "📤 Upload Manual de Banner":
     uploaded_banner = st.sidebar.file_uploader(
@@ -352,18 +347,18 @@ if opcao_banner_selecionada == "📤 Upload Manual de Banner":
         banner_imagem_ativa = Image.open(uploaded_banner).convert("RGBA")
         st.sidebar.image(
             banner_imagem_ativa,
-            caption="🔍 Pré-visualização do Banner Manual",
+            caption="🔍 Pré-visualização do Banner",
             use_container_width=True,
         )
 
-elif opcao_banner_selecionada in dicio_banners:
-    caminho_banner = dicio_banners[opcao_banner_selecionada]
-    arquivo_banner_ativo_nome = os.path.basename(caminho_banner)
+elif opcao_banner_selecionada.startswith("📁 "):
+    nome_banner_atual = opcao_banner_selecionada.replace("📁 ", "")
+    caminho_banner = os.path.join("banners", nome_banner_atual)
     if os.path.exists(caminho_banner):
         banner_imagem_ativa = Image.open(caminho_banner).convert("RGBA")
         st.sidebar.image(
             banner_imagem_ativa,
-            caption="🔍 Pré-visualização do Banner Selecionado",
+            caption=f"Banner: {nome_banner_atual}",
             use_container_width=True,
         )
 
@@ -374,12 +369,13 @@ if banner_imagem_ativa is None:
     )
 
     if logo_uploaded:
-        img_temp = Image.open(logo_uploaded)
-        img_temp.save(LOGO_PATH)
-        st.sidebar.success("✅ Novo logo salvo com sucesso!")
+        st.session_state["logo_bytes"] = logo_uploaded.getvalue()
+        st.sidebar.success("✅ Novo logo salvo na sua sessão!")
 
-    if os.path.exists(LOGO_PATH):
-        st.sidebar.image(LOGO_PATH, width=100, caption="Logo Ativo")
+    if st.session_state["logo_bytes"] is not None:
+        st.sidebar.image(
+            st.session_state["logo_bytes"], width=100, caption="Logo Ativo"
+        )
 
     st.sidebar.subheader("Textos do Topo")
 
@@ -420,13 +416,10 @@ if banner_imagem_ativa is None:
 
 st.sidebar.markdown("---")
 
+# ==========================================
+# 🎨 2. FUNDO DO CATÁLOGO (INTEGRADO COM O ADM)
+# ==========================================
 st.sidebar.header("🎨 2. Fundo do Catálogo (Background)")
-
-cor_vinculada_ao_banner = (
-    dict_cores_banners.get(arquivo_banner_ativo_nome)
-    if arquivo_banner_ativo_nome
-    else None
-)
 
 tipo_fundo = st.sidebar.radio(
     "Escolha o Tipo de Fundo",
@@ -437,26 +430,69 @@ tipo_fundo = st.sidebar.radio(
 )
 
 bg_custom_file = None
-cor_fundo_catalogo = "#F0F2F5"
+
+# Cor padrão definida pelo ADM para o banner selecionado (se houver)
+cor_padrao_adm = "#F0F2F5"
+if nome_banner_atual and nome_banner_atual in dict_cores_banners:
+    cor_padrao_adm = dict_cores_banners[nome_banner_atual]
 
 if tipo_fundo == "Cor Sólida / Hexadecimal":
-    if cor_vinculada_ao_banner:
-        st.sidebar.info(
-            f"🔒 **Cor Vinculada ao Banner:** `{cor_vinculada_ao_banner}`"
-        )
-        cor_fundo_catalogo = cor_vinculada_ao_banner
-    else:
-        cor_fundo_catalogo = st.sidebar.color_picker(
-            "Escolha ou Cole a Cor Hexadecimal (#HEX)",
-            value="#F0F2F5",
-            help="Digite diretamente a cor hexadecimal (Ex: #FF5733, #1A2B3C).",
-        )
+    cor_fundo_catalogo = st.sidebar.color_picker(
+        "Escolha ou Cole a Cor Hexadecimal (#HEX)",
+        value=cor_padrao_adm,
+        help="Cor padrão definida pelo Administrador ou personalizada manualmente.",
+    )
 else:
     bg_custom_file = st.sidebar.file_uploader(
         "Upload de Textura/Imagem de Fundo",
         type=["png", "jpg", "jpeg"],
         help="Envie uma imagem de madeira, pedra ou textura para o fundo.",
     )
+
+# ==========================================
+# 🔑 PAINEL EXCLUSIVO DO ADM (CONFIGURAÇÃO PERMANENTE)
+# ==========================================
+st.sidebar.markdown("---")
+with st.sidebar.expander("🔑 Área do Administrador (Cores de Banners)"):
+    senha_adm_input = st.text_input(
+        "Senha Mestra do ADM", type="password", key="input_senha_adm"
+    )
+
+    if senha_adm_input == SENHA_ADM:
+        st.success("🔓 Acesso ADM Liberado!")
+
+        if arquivos_banners:
+            banner_para_config = st.selectbox(
+                "Selecione o Banner para Fixar Cor",
+                [os.path.basename(b) for b in arquivos_banners],
+                key="select_banner_adm",
+            )
+
+            cor_atual_adm = dict_cores_banners.get(
+                banner_para_config, "#F0F2F5"
+            )
+
+            nova_cor_hex = st.text_input(
+                "Cor Hexadecimal Fixa (#HEX)",
+                value=cor_atual_adm,
+                key="input_hex_adm",
+            )
+
+            if st.button("💾 Salvar Cor Fixa no Servidor"):
+                dict_cores_banners[banner_para_config] = (
+                    nova_cor_hex.strip().upper()
+                )
+                salvar_cores_banners(dict_cores_banners)
+                st.success(
+                    f"Cor {nova_cor_hex} vinculada ao banner {banner_para_config}!"
+                )
+                st.rerun()
+        else:
+            st.info(
+                "Crie a pasta 'banners' no repositório e adicione arquivos PNG/JPG para configurar."
+            )
+    elif senha_adm_input != "":
+        st.error("Senha de ADM incorreta.")
 
 st.sidebar.markdown("---")
 st.sidebar.header("📝 3. Rodapé")
@@ -487,7 +523,6 @@ zoom_porcentagem = st.sidebar.slider(
     max_value=200,
     value=110,
     step=10,
-    help="Aumenta proporcionalmente a foto limpa do produto no card.",
 )
 fator_zoom = zoom_porcentagem / 100.0
 
@@ -520,7 +555,6 @@ st.sidebar.markdown("---")
 modo_parana = st.sidebar.checkbox(
     "🌲 Modo Paraná (Substituir Códigos)",
     value=False,
-    help="Substitui o código original pelo código do PR na arte final.",
 )
 
 if modo_parana and produtos_inputs:
@@ -533,34 +567,8 @@ if modo_parana and produtos_inputs:
         )
         produtos_inputs[idx]["cod_parana"] = cod_pr.strip()
 
-
-# --- GERENCIADOR DE CORES DOS BANNERS ---
-st.sidebar.markdown("---")
-with st.sidebar.expander("🎨 Configurar Cores dos Banners"):
-    if arquivos_banners:
-        banner_para_config = st.selectbox(
-            "Selecione o Banner",
-            [os.path.basename(b) for b in arquivos_banners],
-            key="select_banner_cor",
-        )
-
-        cor_atual_salva = dict_cores_banners.get(banner_para_config, "#F0F2F5")
-
-        cor_hex_input = st.text_input(
-            "Cor Hexadecimal (#HEX)",
-            value=cor_atual_salva,
-            key="input_hex_banner",
-        )
-
-        if st.button("💾 Salvar Cor do Banner"):
-            dict_cores_banners[banner_para_config] = cor_hex_input.strip().upper()
-            salvar_cores_banners(dict_cores_banners)
-            st.success(f"Cor {cor_hex_input} salva com sucesso!")
-            st.rerun()
-
-
 # ==========================================
-# MONTAGEM DA IMAGEM
+# MONTAGEM DA IMAGEM FINAL
 # ==========================================
 if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
@@ -588,7 +596,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            # --- ESTRUTURA DO GRID ---
             if total == 1:
                 cols, linhas = 1, 1
             elif total == 2:
@@ -634,8 +641,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 catalogo.paste(banner_resized, (0, 0), banner_resized)
             else:
                 x_inicio_texto = 40
-                if os.path.exists(LOGO_PATH):
-                    logo_img = Image.open(LOGO_PATH).convert("RGBA")
+                if st.session_state["logo_bytes"] is not None:
+                    logo_img = Image.open(
+                        io.BytesIO(st.session_state["logo_bytes"])
+                    ).convert("RGBA")
                     logo_img.thumbnail((220, ALTURA_CABECALHO - 40))
                     catalogo.paste(
                         logo_img,
