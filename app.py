@@ -6,7 +6,7 @@ import re
 import textwrap
 import time
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import requests
 import streamlit as st
 
@@ -688,11 +688,34 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             # --- 1. CABEÇALHO ---
             if banner_imagem_ativa:
+                # Ajuste proporcional inteligente (mantem aspecto original do banner)
+                banner_ratio = banner_imagem_ativa.width / banner_imagem_ativa.height
+                
+                target_h = ALTURA_CABECALHO - 15
+                target_w = int(target_h * banner_ratio)
+
+                if target_w > LARGURA_MAX:
+                    target_w = LARGURA_MAX
+                    target_h = int(target_w / banner_ratio)
+
                 banner_resized = banner_imagem_ativa.resize(
-                    (LARGURA_MAX, ALTURA_CABECALHO - 15),
-                    Image.Resampling.LANCZOS,
+                    (target_w, target_h), Image.Resampling.LANCZOS
                 )
-                catalogo.paste(banner_resized, (0, 0), banner_resized)
+
+                # Preenchimento de Fundo Inteligente usando Desfoque (Blur)
+                bg_banner = banner_imagem_ativa.resize(
+                    (LARGURA_MAX, ALTURA_CABECALHO - 15), Image.Resampling.LANCZOS
+                )
+                bg_banner = bg_banner.filter(ImageFilter.GaussianBlur(radius=15))
+
+                catalogo.paste(bg_banner, (0, 0))
+
+                # Centraliza o banner sem distorcer por cima do fundo desfocado
+                pos_x_banner = (LARGURA_MAX - target_w) // 2
+                pos_y_banner = ((ALTURA_CABECALHO - 15) - target_h) // 2
+                
+                catalogo.paste(banner_resized, (pos_x_banner, pos_y_banner), banner_resized)
+
             else:
                 x_inicio_texto = 40
                 if st.session_state["logo_bytes"] is not None:
