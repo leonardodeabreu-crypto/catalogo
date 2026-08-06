@@ -182,27 +182,40 @@ def buscar_dados_produto(codigo_busca):
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
 
+            # Busca código do produto
             codigo_tag = soup.find("p", class_="card-text small")
             if codigo_tag:
                 numeros = re.findall(r"\d+", codigo_tag.get_text(strip=True))
                 if numeros:
                     dados["codigo"] = numeros[0]
 
+            # Busca título do produto
             titulo_tag = soup.find("h6", class_="card-title")
             if titulo_tag:
                 dados["titulo"] = titulo_tag.get_text(strip=True).upper()
 
             cod_real = dados["codigo"]
 
-            img_tag = soup.find("img", class_="img-produto") or soup.find("img")
-            if img_tag:
+            # BUSCA AVANÇADA DA IMAGEM (VERIFICA VÁRIAS TAGS E ATRIBUTOS LAZY-LOADING)
+            tags_imagem = soup.find_all("img")
+            
+            for img_tag in tags_imagem:
                 url_encontrada = (
                     img_tag.get("data-src")
+                    or img_tag.get("data-original")
+                    or img_tag.get("data-lazy-src")
                     or img_tag.get("data-zoom-image")
                     or img_tag.get("src")
                 )
 
+                if not url_encontrada and img_tag.get("srcset"):
+                    url_encontrada = img_tag.get("srcset").split(",")[0].split()[0]
+
                 if url_encontrada and not url_encontrada.endswith("load.gif"):
+                    # Filtra imagens irrelevantes (logos, ícones)
+                    if any(x in url_encontrada.lower() for x in ["logo", "icon", "banner", "loader"]):
+                        continue
+
                     url_limpa = re.sub(
                         r"\?(width|height|w|h|dim)=\d+.*$", "", url_encontrada
                     )
@@ -215,7 +228,9 @@ def buscar_dados_produto(codigo_busca):
                         )
 
                     dados["img_url"] = url_limpa
+                    break  # Encontrou a imagem do produto
 
+            # Fallback direto via CDN do fornecedor caso não encontre via scraping HTML
             if not dados["img_url"]:
                 dados["img_url"] = (
                     f"https://www.mercadoagora.com/arquivos/produtos/{cod_real}/1.jpg"
@@ -274,7 +289,7 @@ def desenhar_selo_no_card(
     card_y1,
     cor_fundo="#E53935",
     cor_texto="white",
-    tam_fonte=13,
+    tam_fonte=15,
 ):
     if not texto_desconto:
         return
@@ -282,11 +297,17 @@ def desenhar_selo_no_card(
     fonte_selo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tam_fonte)
 
     bbox = draw.textbbox((0, 0), texto_desconto, font=fonte_selo)
+    
+    # Métricas exatas do texto
+    text_x_offset = bbox[0]
+    text_y_offset = bbox[1]
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
 
-    padding_h = max(10, int(tam_fonte * 0.65))
-    padding_v = max(5, int(tam_fonte * 0.35))
+    # Espaçamento proporcional
+    padding_h = max(12, int(tam_fonte * 0.70))
+    padding_v = max(6, int(tam_fonte * 0.40))
+    
     selo_w = text_w + (padding_h * 2)
     selo_h = text_h + (padding_v * 2)
 
@@ -298,9 +319,15 @@ def desenhar_selo_no_card(
     y0 = card_y1 + margem_topo
     y1 = y0 + selo_h
 
+    # Desenhar fundo do selo
     draw.rectangle([x0, y0, x1, y1], fill=cor_fundo)
+
+    # Centralização Absoluta Perfeita (Compensando o deslocamento interno do Pillow)
+    pos_x = x0 + (selo_w - text_w) / 2 - text_x_offset
+    pos_y = y0 + (selo_h - text_h) / 2 - text_y_offset
+
     draw.text(
-        (x0 + padding_h, y0 + padding_v - 1),
+        (pos_x, pos_y),
         texto_desconto,
         fill=cor_texto,
         font=fonte_selo,
@@ -561,7 +588,7 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-# NOVO: CONTROLADOR DE TAMANHO DA LETRA DOS PRODUTOS
+# CONTROLADOR DE TAMANHO DA LETRA DOS PRODUTOS
 opcao_tam_fonte_prod = st.sidebar.selectbox(
     "🔤 Tamanho do Texto do Produto",
     ["Normal (Tamanho 1)", "Médio (+20%)", "Grande (+35%)"],
@@ -635,7 +662,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     else:
         with st.spinner("Buscando dados e imagens dos produtos em paralelo..."):
             
-            # USO DE EXECUTOR MULTITHREAD PARA PERFORMANCE
             produtos_carregados = []
             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                 futures = [
@@ -647,7 +673,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             total = len(produtos_carregados)
 
-            # CONFIGURAÇÃO DE DIMENSÕES E GRID SEGUNDO O FORMATO SELECIONADO
+            # CONFIGURAÇÃO DE DIMENSÕES E GRID
             if is_status_mode:
                 LARGURA_MAX = 1080
                 ALTURA_MAX = 1920
@@ -660,7 +686,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     cols, linhas = 1, total
                 elif total == 4:
                     cols, linhas = 2, 2
-                else:  # 5 ou 6 produtos
+                else:
                     cols, linhas = 2, 3
             else:
                 LARGURA_MAX = 1200
@@ -786,11 +812,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 else:
                     tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 13, 11, 13
 
-            # Aplica o multiplicador do controle de tamanho de texto
             tamanho_fonte_tit = max(10, int(tamanho_base_tit * fator_fonte_prod))
             tamanho_fonte_cod = max(9, int(tamanho_base_cod * fator_fonte_prod))
-            # Aplica os +30% na flag de desconto
-            tamanho_fonte_selo = max(12, int(tamanho_base_selo * 1.30))
+            # Aumento acumulado (+15% adicionais) na fonte e tamanho do selo
+            tamanho_fonte_selo = max(14, int(tamanho_base_selo * 1.50))
 
             fonte_prod_titulo = carregar_fonte(
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit
@@ -823,7 +848,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     width=1,
                 )
 
-                # Ajusta quebra de linha de acordo com o tamanho aumentado da fonte
                 char_limite = max(8, int((card_w // (14 if total == 1 else 10)) / fator_fonte_prod))
                 titulos_wrapped = textwrap.wrap(
                     prod["titulo"], width=char_limite
