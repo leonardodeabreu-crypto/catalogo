@@ -285,8 +285,8 @@ def desenhar_selo_no_card(
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
 
-    padding_h = max(8, int(tam_fonte * 0.6))
-    padding_v = max(4, int(tam_fonte * 0.3))
+    padding_h = max(10, int(tam_fonte * 0.65))
+    padding_v = max(5, int(tam_fonte * 0.35))
     selo_w = text_w + (padding_h * 2)
     selo_h = text_h + (padding_v * 2)
 
@@ -561,6 +561,21 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
+# NOVO: CONTROLADOR DE TAMANHO DA LETRA DOS PRODUTOS
+opcao_tam_fonte_prod = st.sidebar.selectbox(
+    "🔤 Tamanho do Texto do Produto",
+    ["Normal (Tamanho 1)", "Médio (+20%)", "Grande (+35%)"],
+    index=0,
+    help="Aumenta proporcionalmente a descrição e código do produto no catálogo."
+)
+
+if "Médio" in opcao_tam_fonte_prod:
+    fator_fonte_prod = 1.20
+elif "Grande" in opcao_tam_fonte_prod:
+    fator_fonte_prod = 1.35
+else:
+    fator_fonte_prod = 1.00
+
 # OPÇÕES DE QUANTIDADE SEGUNDO O FORMATO
 is_status_mode = "Status WhatsApp" in formato_catalogo
 
@@ -639,7 +654,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 ALTURA_CABECALHO = 280
                 ALTURA_RODAPE = 80
 
-                # Regras de Distribuição para Status (1080 x 1920 px)
                 if total == 1:
                     cols, linhas = 1, 1
                 elif total in [2, 3]:
@@ -654,7 +668,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 ALTURA_CABECALHO = 220
                 ALTURA_RODAPE = 60
 
-                # Regras de Distribuição para Quadrado (1200 x 1200 px)
                 if total == 1:
                     cols, linhas = 1, 1
                 elif total == 2:
@@ -688,7 +701,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             # --- 1. CABEÇALHO ---
             if banner_imagem_ativa:
-                # Ajuste proporcional inteligente (mantem aspecto original do banner)
                 banner_ratio = banner_imagem_ativa.width / banner_imagem_ativa.height
                 
                 target_h = ALTURA_CABECALHO - 15
@@ -702,7 +714,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     (target_w, target_h), Image.Resampling.LANCZOS
                 )
 
-                # Preenchimento de Fundo Inteligente usando Desfoque (Blur)
                 bg_banner = banner_imagem_ativa.resize(
                     (LARGURA_MAX, ALTURA_CABECALHO - 15), Image.Resampling.LANCZOS
                 )
@@ -710,7 +721,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 catalogo.paste(bg_banner, (0, 0))
 
-                # Centraliza o banner sem distorcer por cima do fundo desfocado
                 pos_x_banner = (LARGURA_MAX - target_w) // 2
                 pos_y_banner = ((ALTURA_CABECALHO - 15) - target_h) // 2
                 
@@ -763,20 +773,24 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             # --- 2. CARDS E PRODUTOS ---
             if is_status_mode:
                 if total <= 2:
-                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 20, 16, 18
+                    tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 20, 16, 18
                 elif total == 3:
-                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 18, 14, 16
+                    tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 18, 14, 16
                 else:
-                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 15, 12, 14
+                    tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 15, 12, 14
             else:
                 if total == 1:
-                    tamanho_fonte_tit = int(13 * 1.30)
-                    tamanho_fonte_cod = int(11 * 1.30)
-                    tamanho_fonte_selo = int(13 * 1.30)
+                    tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 17, 14, 17
                 elif cols == 4:
-                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 11, 10, 13
+                    tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 11, 10, 13
                 else:
-                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 13, 11, 13
+                    tamanho_base_tit, tamanho_base_cod, tamanho_base_selo = 13, 11, 13
+
+            # Aplica o multiplicador do controle de tamanho de texto
+            tamanho_fonte_tit = max(10, int(tamanho_base_tit * fator_fonte_prod))
+            tamanho_fonte_cod = max(9, int(tamanho_base_cod * fator_fonte_prod))
+            # Aplica os +30% na flag de desconto
+            tamanho_fonte_selo = max(12, int(tamanho_base_selo * 1.30))
 
             fonte_prod_titulo = carregar_fonte(
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit
@@ -809,7 +823,8 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     width=1,
                 )
 
-                char_limite = max(10, card_w // (14 if total == 1 else 10))
+                # Ajusta quebra de linha de acordo com o tamanho aumentado da fonte
+                char_limite = max(8, int((card_w // (14 if total == 1 else 10)) / fator_fonte_prod))
                 titulos_wrapped = textwrap.wrap(
                     prod["titulo"], width=char_limite
                 )[:2]
