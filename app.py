@@ -1,3 +1,4 @@
+import concurrent.futures
 import io
 import json
 import os
@@ -26,8 +27,9 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
-SENHA_USUARIO = "2244"
-SENHA_ADM = "9988"
+# Recomendado mover para st.secrets em produção!
+SENHA_USUARIO = st.secrets.get("SENHA_USUARIO", "2244")
+SENHA_ADM = st.secrets.get("SENHA_ADM", "9988")
 ARQUIVO_CORES_JSON = "cores_banners.json"
 
 # ==========================================
@@ -58,10 +60,7 @@ if "logo_bytes" not in st.session_state:
     st.session_state["logo_bytes"] = None
 
 if "autenticado" not in st.session_state:
-    if st.query_params.get("auth") == "ok":
-        st.session_state["autenticado"] = True
-    else:
-        st.session_state["autenticado"] = False
+    st.session_state["autenticado"] = st.query_params.get("auth") == "ok"
 
 # ==========================================
 # TELA DE LOGIN
@@ -70,18 +69,18 @@ if not st.session_state["autenticado"]:
     st.title("🔒 Acesso Restrito")
     st.write("Digite a senha de acesso para utilizar o gerador de catálogos.")
 
-    senha_digitada = st.text_input(
-        "Senha de Acesso", type="password", max_chars=4
-    )
+    with st.form("login_form"):
+        senha_digitada = st.text_input("Senha de Acesso", type="password", max_chars=10)
+        btn_login = st.form_submit_button("Entrar")
 
-    if st.button("Entrar"):
-        if senha_digitada == SENHA_USUARIO or senha_digitada == SENHA_ADM:
-            st.session_state["autenticado"] = True
-            st.query_params["auth"] = "ok"
-            st.success("Acesso liberado!")
-            st.rerun()
-        else:
-            st.error("Senha incorreta. Tente novamente.")
+        if btn_login:
+            if senha_digitada in [SENHA_USUARIO, SENHA_ADM]:
+                st.session_state["autenticado"] = True
+                st.query_params["auth"] = "ok"
+                st.success("Acesso liberado!")
+                st.rerun()
+            else:
+                st.error("Senha incorreta. Tente novamente.")
 
     st.stop()
 
@@ -110,6 +109,7 @@ OPCOES_FONTES = {
     ],
 }
 
+@st.cache_resource
 def carregar_fonte(estilo_escolhido, tamanho):
     lista_fontes = OPCOES_FONTES.get(
         estilo_escolhido,
@@ -143,6 +143,18 @@ if st.sidebar.button("🚪 Sair do Sistema"):
         del st.query_params["auth"]
     st.rerun()
 
+st.sidebar.markdown("---")
+
+# 1. SELEÇÃO DE FORMATO / TAMANHO
+formato_catalogo = st.sidebar.radio(
+    "📐 Formato do Catálogo",
+    ["Quadrado (1200 x 1200 px)", "Status WhatsApp (1080 x 1920 px)"],
+    index=0,
+    help="Escolha o formato da imagem final do catálogo."
+)
+
+st.sidebar.markdown("---")
+
 OPCOES_CORES = {
     "Vermelho Oferta": "#D32F2F",
     "Amarelo Encarte": "#FBC02D",
@@ -166,7 +178,7 @@ def buscar_dados_produto(codigo_busca):
     }
 
     try:
-        response = requests.get(url, headers=HEADERS, timeout=10)
+        response = requests.get(url, headers=HEADERS, timeout=8)
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, "html.parser")
 
@@ -178,7 +190,7 @@ def buscar_dados_produto(codigo_busca):
 
             titulo_tag = soup.find("h6", class_="card-title")
             if titulo_tag:
-                dados["titulo"] = titulo_tag.get_text(strip=True)
+                dados["titulo"] = titulo_tag.get_text(strip=True).upper()
 
             cod_real = dados["codigo"]
 
@@ -209,9 +221,8 @@ def buscar_dados_produto(codigo_busca):
                     f"https://www.mercadoagora.com/arquivos/produtos/{cod_real}/1.jpg"
                 )
 
-            return dados
     except Exception as e:
-        st.error(f"Erro ao buscar produto {codigo_busca}: {e}")
+        st.warning(f"Aviso ao buscar produto {codigo_busca}: {e}")
 
     return dados
 
@@ -220,13 +231,29 @@ def baixar_imagem(url):
     if not url:
         return None
     try:
-        response = requests.get(url, headers=HEADERS, timeout=12)
+        response = requests.get(url, headers=HEADERS, timeout=8)
         if response.status_code == 200:
             img = Image.open(io.BytesIO(response.content))
             return img.convert("RGBA")
     except Exception:
         pass
     return None
+
+def carregar_produto_completo(item_input, modo_parana):
+    dados = buscar_dados_produto(item_input["codigo"])
+    img = baixar_imagem(dados["img_url"]) if dados else None
+
+    if not img:
+        img = Image.new("RGBA", (300, 300), color=(240, 240, 240, 255))
+
+    dados["imagem"] = img
+    dados["desconto"] = item_input["desconto"]
+    dados["validade"] = item_input["validade"]
+
+    if modo_parana and item_input["cod_parana"]:
+        dados["codigo"] = item_input["cod_parana"]
+
+    return dados
 
 
 def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
@@ -288,8 +315,8 @@ def desenhar_texto_alinhado(
     tamanho,
     alinhamento,
     estilo_fonte="Padrão Negrito (Liberation / Arial)",
-    x_inicio=270,
-    x_fim=1170,
+    x_inicio=30,
+    x_fim=1050,
 ):
     if not texto.strip():
         return y
@@ -314,7 +341,6 @@ def desenhar_texto_alinhado(
 # ==========================================
 arquivos_banners = []
 
-# Busca banners na RAIZ e na pasta 'banners'
 for f in os.listdir("."):
     if f.lower().startswith("banner") and f.lower().endswith(
         (".png", ".jpg", ".jpeg")
@@ -347,7 +373,7 @@ if opcao_banner_selecionada == "📤 Upload Manual de Banner":
     uploaded_banner = st.sidebar.file_uploader(
         "Upload do Banner do Cabeçalho",
         type=["png", "jpg", "jpeg"],
-        help="Recomendado: Imagem retangular (ex: 1200x220px).",
+        help="Recomendado: Imagem retangular.",
     )
     if uploaded_banner:
         banner_imagem_ativa = Image.open(uploaded_banner).convert("RGBA")
@@ -431,7 +457,7 @@ st.sidebar.markdown("---")
 # ==========================================
 # 🎨 2. FUNDO DO CATÁLOGO
 # ==========================================
-st.sidebar.header("🎨 2. Fundo do Catálogo (Background)")
+st.sidebar.header("🎨 2. Fundo do Catálogo")
 
 tipo_fundo = st.sidebar.radio(
     "Escolha o Tipo de Fundo",
@@ -535,19 +561,28 @@ zoom_porcentagem = st.sidebar.slider(
 )
 fator_zoom = zoom_porcentagem / 100.0
 
-OPCOES_QUANTIDADE = [1, 2, 3, 6, 9, 12, 16]
-num_produtos = st.sidebar.selectbox(
-    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=3
-)
+# OPÇÕES DE QUANTIDADE SEGUNDO O FORMATO
+is_status_mode = "Status WhatsApp" in formato_catalogo
+
+if is_status_mode:
+    OPCOES_QUANTIDADE = [1, 2, 3, 4, 5, 6]
+    num_produtos = st.sidebar.selectbox(
+        "Quantidade de Produtos (Máx: 6 para Status)", OPCOES_QUANTIDADE, index=3
+    )
+else:
+    OPCOES_QUANTIDADE = [1, 2, 3, 6, 9, 12, 16]
+    num_produtos = st.sidebar.selectbox(
+        "Quantidade de Produtos", OPCOES_QUANTIDADE, index=3
+    )
 
 produtos_inputs = []
 for i in range(num_produtos):
     st.sidebar.markdown(f"**Produto #{i+1}**")
     col1, col2 = st.sidebar.columns([2, 2])
     with col1:
-        cod = st.text_input(f"COD. #{i+1}", key=f"cod_{i}")
+        cod = st.sidebar.text_input(f"COD. #{i+1}", key=f"cod_{i}")
     with col2:
-        desc = st.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
+        desc = st.sidebar.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
 
     val = st.sidebar.text_input(f"Validade Ex: val: 08/08/2026", key=f"val_{i}")
 
@@ -583,47 +618,57 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
     if not produtos_inputs:
         st.warning("Por favor, insira pelo menos um código na barra lateral.")
     else:
-        with st.spinner("Buscando imagens limpas dos produtos e gerando arte..."):
+        with st.spinner("Buscando dados e imagens dos produtos em paralelo..."):
+            
+            # USO DE EXECUTOR MULTITHREAD PARA PERFORMANCE
             produtos_carregados = []
-
-            for item in produtos_inputs:
-                dados = buscar_dados_produto(item["codigo"])
-                img = baixar_imagem(dados["img_url"]) if dados else None
-
-                if not img:
-                    img = Image.new("RGBA", (300, 300), color=(230, 230, 230, 255))
-
-                dados["imagem"] = img
-                dados["desconto"] = item["desconto"]
-                dados["validade"] = item["validade"]
-
-                if modo_parana and item["cod_parana"]:
-                    dados["codigo"] = item["cod_parana"]
-
-                produtos_carregados.append(dados)
-                time.sleep(0.1)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                futures = [
+                    executor.submit(carregar_produto_completo, item, modo_parana)
+                    for item in produtos_inputs
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    produtos_carregados.append(future.result())
 
             total = len(produtos_carregados)
 
-            if total == 1:
-                cols, linhas = 1, 1
-            elif total == 2:
-                cols, linhas = 2, 1
-            elif total <= 3:
-                cols, linhas = 3, 1
-            elif total <= 6:
-                cols, linhas = 3, 2
-            elif total <= 9:
-                cols, linhas = 3, 3
-            elif total <= 12:
-                cols, linhas = 4, 3
-            else:
-                cols, linhas = 4, 4
+            # CONFIGURAÇÃO DE DIMENSÕES E GRID SEGUNDO O FORMATO SELECIONADO
+            if is_status_mode:
+                LARGURA_MAX = 1080
+                ALTURA_MAX = 1920
+                ALTURA_CABECALHO = 280
+                ALTURA_RODAPE = 80
 
-            LARGURA_MAX = 1200
-            ALTURA_MAX = 1200
-            ALTURA_CABECALHO = 220
-            ALTURA_RODAPE = 60
+                # Regras de Distribuição para Status (1080 x 1920 px)
+                if total == 1:
+                    cols, linhas = 1, 1
+                elif total in [2, 3]:
+                    cols, linhas = 1, total
+                elif total == 4:
+                    cols, linhas = 2, 2
+                else:  # 5 ou 6 produtos
+                    cols, linhas = 2, 3
+            else:
+                LARGURA_MAX = 1200
+                ALTURA_MAX = 1200
+                ALTURA_CABECALHO = 220
+                ALTURA_RODAPE = 60
+
+                # Regras de Distribuição para Quadrado (1200 x 1200 px)
+                if total == 1:
+                    cols, linhas = 1, 1
+                elif total == 2:
+                    cols, linhas = 2, 1
+                elif total <= 3:
+                    cols, linhas = 3, 1
+                elif total <= 6:
+                    cols, linhas = 3, 2
+                elif total <= 9:
+                    cols, linhas = 3, 3
+                elif total <= 12:
+                    cols, linhas = 4, 3
+                else:
+                    cols, linhas = 4, 4
 
             altura_area_produtos = ALTURA_MAX - ALTURA_CABECALHO - ALTURA_RODAPE
             largura_slot = LARGURA_MAX // cols
@@ -672,6 +717,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     alinh_1,
                     estilo_fonte=fonte_1,
                     x_inicio=x_inicio_texto,
+                    x_fim=LARGURA_MAX - 30,
                 )
                 desenhar_texto_alinhado(
                     draw,
@@ -682,31 +728,32 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     alinh_2,
                     estilo_fonte=fonte_2,
                     x_inicio=x_inicio_texto,
+                    x_fim=LARGURA_MAX - 30,
                 )
 
             draw.line(
-                [(30, ALTURA_CABECALHO - 15), (1170, ALTURA_CABECALHO - 15)],
+                [(30, ALTURA_CABECALHO - 15), (LARGURA_MAX - 30, ALTURA_CABECALHO - 15)],
                 fill="#CCCCCC",
                 width=2,
             )
 
             # --- 2. CARDS E PRODUTOS ---
-            if total == 1:
-                tamanho_fonte_tit = int(13 * 1.30)
-                tamanho_fonte_cod = int(11 * 1.30)
-                tamanho_fonte_selo = int(13 * 1.30)
-            elif cols == 4:
-                tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = (
-                    11,
-                    10,
-                    13,
-                )
+            if is_status_mode:
+                if total <= 2:
+                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 20, 16, 18
+                elif total == 3:
+                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 18, 14, 16
+                else:
+                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 15, 12, 14
             else:
-                tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = (
-                    13,
-                    11,
-                    13,
-                )
+                if total == 1:
+                    tamanho_fonte_tit = int(13 * 1.30)
+                    tamanho_fonte_cod = int(11 * 1.30)
+                    tamanho_fonte_selo = int(13 * 1.30)
+                elif cols == 4:
+                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 11, 10, 13
+                else:
+                    tamanho_fonte_tit, tamanho_fonte_cod, tamanho_fonte_selo = 13, 11, 13
 
             fonte_prod_titulo = carregar_fonte(
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit
@@ -715,7 +762,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_cod
             )
 
-            padding_card = 8 if cols == 4 else 12
+            padding_card = 12 if is_status_mode else (8 if cols == 4 else 12)
             card_w = largura_slot - (padding_card * 2)
             card_h = altura_slot - (padding_card * 2)
 
@@ -811,7 +858,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             # --- 3. RODAPÉ ---
             y_rodape = ALTURA_MAX - ALTURA_RODAPE + 10
             draw.line(
-                [(30, y_rodape - 5), (1170, y_rodape - 5)],
+                [(30, y_rodape - 5), (LARGURA_MAX - 30, y_rodape - 5)],
                 fill="#CCCCCC",
                 width=2,
             )
@@ -825,14 +872,14 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 alinh_r,
                 estilo_fonte=fonte_r,
                 x_inicio=30,
-                x_fim=1170,
+                x_fim=LARGURA_MAX - 30,
             )
 
             # --- EXIBIÇÃO FINAL ---
             catalogo_rgb = catalogo.convert("RGB")
             st.image(
                 catalogo_rgb,
-                caption="Resultado Final do Catálogo (1200x1200px HD)",
+                caption=f"Resultado Final do Catálogo ({LARGURA_MAX}x{ALTURA_MAX}px HD)",
                 use_container_width=True,
             )
 
@@ -843,6 +890,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             st.download_button(
                 label="💾 Baixar Imagem Gerada em Alta Qualidade (PNG)",
                 data=byte_im,
-                file_name="catalogo_promocional_hd.png",
+                file_name=f"catalogo_{'status' if is_status_mode else 'quadrado'}.png",
                 mime="image/png",
             )
