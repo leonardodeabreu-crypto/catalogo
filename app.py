@@ -351,7 +351,7 @@ def desenhar_texto_alinhado(
     return y + (bbox[3] - bbox[1]) + 8
 
 def tratar_e_desenhar_preco(
-    draw, texto_preco, center_x, center_y, cor_preco, tamanho_base, estilo_fonte
+    draw, texto_preco, x_min, x_max, center_y, cor_preco, tamanho_base, estilo_fonte
 ):
     if not texto_preco or not texto_preco.strip():
         return
@@ -370,9 +370,9 @@ def tratar_e_desenhar_preco(
     txt_int = f" {inteiro},"
     txt_cent = centavos
 
-    tam_rs = int(tamanho_base * 0.55)
+    tam_rs = int(tamanho_base * 0.50)
     tam_int = int(tamanho_base)
-    tam_cent = int(tamanho_base * 0.52)
+    tam_cent = int(tamanho_base * 0.50)
 
     fonte_rs = carregar_fonte(estilo_fonte, tam_rs)
     fonte_int = carregar_fonte(estilo_fonte, tam_int)
@@ -387,23 +387,40 @@ def tratar_e_desenhar_preco(
     w_cent = bbox_cent[2] - bbox_cent[0]
 
     w_total = w_rs + w_int + w_cent
+    largura_disponivel = x_max - x_min
 
-    start_x = center_x - (w_total // 2)
+    # Trava de segurança: se o número ainda assim estourar a coluna, reduz o tamanho e recalcula
+    if w_total > largura_disponivel and tamanho_base > 10:
+        fator_reducao = largura_disponivel / w_total
+        novo_tam = max(8, int(tamanho_base * fator_reducao))
+        return tratar_e_desenhar_preco(
+            draw,
+            texto_preco,
+            x_min,
+            x_max,
+            center_y,
+            cor_preco,
+            novo_tam,
+            estilo_fonte,
+        )
 
-    # Medidas de altura
+    # Centralização perfeita do preço na subcoluna da direita
+    start_x = x_min + max(0, (largura_disponivel - w_total) // 2)
+
+    # Cálculo da linha de base
     h_int = bbox_int[3] - bbox_int[1]
     base_y = center_y + (h_int // 2)
 
-    # Desenha R$
-    y_rs = base_y - (bbox_rs[3] - bbox_rs[1]) - 4
+    # R$
+    y_rs = base_y - (bbox_rs[3] - bbox_rs[1]) - 2
     draw.text((start_x, y_rs), txt_rs, fill=cor_preco, font=fonte_rs)
 
-    # Desenha Inteiro + Vírgula
+    # Inteiro + Vírgula
     x_int = start_x + w_rs
     y_int = base_y - h_int
     draw.text((x_int, y_int), txt_int, fill=cor_preco, font=fonte_int)
 
-    # Desenha Centavos sobrescritos
+    # Centavos
     x_cent = x_int + w_int
     y_cent = y_int + 2
     draw.text((x_cent, y_cent), txt_cent, fill=cor_preco, font=fonte_cent)
@@ -977,7 +994,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 tem_preco = bool(prod["preco"] and prod["preco"].strip())
 
                 if tem_preco:
-                    # Divisão em duas colunas (Esquerda: Foto | Direita: Preço)
+                    # Divisão interna: 48% para a Foto e 52% para o Preço
                     largura_foto_area = int(card_w * 0.48)
                     max_foto_w = largura_foto_area - 12
 
@@ -992,24 +1009,30 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
                     catalogo.paste(img_p, (pos_x, pos_y), img_p)
 
-                    # Cálculo do Tamanho da Fonte do Preço
-                    fator_escala = {"Pequeno": 0.18, "Médio": 0.22, "Grande": 0.27}[tamanho_preco_opcao]
+                    # Escalonamento com redução de ~30%
+                    fator_escala = {
+                        "Pequeno": 0.12, 
+                        "Médio": 0.15, 
+                        "Grande": 0.19
+                    }[tamanho_preco_opcao]
+
                     tam_fonte_preco = int(card_w * fator_escala)
 
-                    centro_x_preco = card_x1 + largura_foto_area + int((card_w - largura_foto_area) / 2)
-                    centro_y_preco = area_foto_top + (max_foto_h // 2)
+                    x_inicio_area_preco = card_x1 + largura_foto_area
+                    x_fim_area_preco = card_x2 - 8
 
                     tratar_e_desenhar_preco(
                         draw,
                         prod["preco"],
-                        centro_x_preco,
-                        centro_y_preco,
+                        x_inicio_area_preco,
+                        x_fim_area_preco,
+                        area_foto_top + (max_foto_h // 2),
                         cor_preco_final,
                         tam_fonte_preco,
                         fonte_preco,
                     )
                 else:
-                    # Centralizado padrão caso não haja preço
+                    # Centralização padrão quando não há preço
                     max_foto_w = card_w - 16
                     img_p = redimensionar_proporcional(
                         prod["imagem"],
