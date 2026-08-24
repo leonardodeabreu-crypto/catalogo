@@ -806,9 +806,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             )
 
             padding_card = 8 if cols == 4 else 12
-            card_w = largura_slot - (padding_card * 2)
-            card_h = altura_slot - (padding_card * 2)
-            card_radius = 12 if cols == 4 else 14
 
             for idx, prod in enumerate(produtos_carregados):
                 c = idx % cols
@@ -817,10 +814,20 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 slot_x = c * largura_slot
                 slot_y = ALTURA_CABECALHO + (l * altura_slot)
 
+                # CÁLCULO PROPORCIONAL DE ALTURA DO CARD
+                # Impede que cards de layouts com poucas linhas (ex: 1x3) fiquem desproporcionalmente altos
+                card_w = largura_slot - (padding_card * 2)
+                altura_max_ideal = int(card_w * 1.45) # Proporção harmônica altura x largura
+                card_h = min(altura_slot - (padding_card * 2), altura_max_ideal)
+
+                # Centralização vertical dentro do slot
+                offset_y_centro = (altura_slot - card_h) // 2
+
                 card_x1 = slot_x + padding_card
-                card_y1 = slot_y + padding_card
+                card_y1 = slot_y + offset_y_centro
                 card_x2 = card_x1 + card_w
                 card_y2 = card_y1 + card_h
+                card_radius = 12 if cols == 4 else 14
 
                 # Desenha o Card Principal
                 draw.rounded_rectangle(
