@@ -356,7 +356,6 @@ def tratar_e_desenhar_preco(
     if not texto_preco or not texto_preco.strip():
         return
 
-    # Tratamento da string do preço
     val_limpo = texto_preco.strip().replace("R$", "").replace(" ", "").replace(".", ",")
     if "," in val_limpo:
         partes = val_limpo.split(",")
@@ -389,7 +388,7 @@ def tratar_e_desenhar_preco(
     w_total = w_rs + w_int + w_cent
     largura_disponivel = x_max - x_min
 
-    # Trava de segurança: se o número ainda assim estourar a coluna, reduz o tamanho e recalcula
+    # Trava de segurança para não ultrapassar limites do container
     if w_total > largura_disponivel and tamanho_base > 10:
         fator_reducao = largura_disponivel / w_total
         novo_tam = max(8, int(tamanho_base * fator_reducao))
@@ -404,10 +403,8 @@ def tratar_e_desenhar_preco(
             estilo_fonte,
         )
 
-    # Centralização perfeita do preço na subcoluna da direita
     start_x = x_min + max(0, (largura_disponivel - w_total) // 2)
 
-    # Cálculo da linha de base
     h_int = bbox_int[3] - bbox_int[1]
     base_y = center_y + (h_int // 2)
 
@@ -989,27 +986,69 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 # ÁREA DA FOTO E PREÇO
                 area_foto_top = card_y1 + 8
                 area_foto_bottom = y_cod - 6
-                max_foto_h = area_foto_bottom - area_foto_top
+                max_foto_h_total = area_foto_bottom - area_foto_top
 
                 tem_preco = bool(prod["preco"] and prod["preco"].strip())
 
-                if tem_preco:
-                    # Divisão interna: 48% para a Foto e 52% para o Preço
+                if tem_preco and cols <= 3:
+                    # ==========================================
+                    # MODO VERTICAL (1 a 3 produtos): Foto em Cima, Preço em Baixo
+                    # ==========================================
+                    altura_disponivel_foto = int(max_foto_h_total * 0.65)
+                    altura_disponivel_preco = max_foto_h_total - altura_disponivel_foto
+
+                    max_foto_w = card_w - 16
+
+                    img_p = redimensionar_proporcional(
+                        prod["imagem"],
+                        max_foto_w,
+                        altura_disponivel_foto,
+                        fator_zoom=fator_zoom,
+                    )
+
+                    pos_x = card_x1 + (card_w - img_p.width) // 2
+                    pos_y = area_foto_top + (altura_disponivel_foto - img_p.height) // 2
+                    catalogo.paste(img_p, (pos_x, pos_y), img_p)
+
+                    fator_escala = {
+                        "Pequeno": 0.15,
+                        "Médio": 0.19,
+                        "Grande": 0.23
+                    }[tamanho_preco_opcao]
+
+                    tam_fonte_preco = int(card_w * fator_escala)
+
+                    centro_y_preco = area_foto_top + altura_disponivel_foto + (altura_disponivel_preco // 2)
+
+                    tratar_e_desenhar_preco(
+                        draw,
+                        prod["preco"],
+                        card_x1 + 8,
+                        card_x2 - 8,
+                        centro_y_preco,
+                        cor_preco_final,
+                        tam_fonte_preco,
+                        fonte_preco,
+                    )
+
+                elif tem_preco:
+                    # ==========================================
+                    # MODO HORIZONTAL (4+ produtos): Foto na Esquerda, Preço na Direita
+                    # ==========================================
                     largura_foto_area = int(card_w * 0.48)
                     max_foto_w = largura_foto_area - 12
 
                     img_p = redimensionar_proporcional(
                         prod["imagem"],
                         max_foto_w,
-                        max_foto_h,
+                        max_foto_h_total,
                         fator_zoom=fator_zoom,
                     )
 
                     pos_x = card_x1 + 8 + (max_foto_w - img_p.width) // 2
-                    pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
+                    pos_y = area_foto_top + (max_foto_h_total - img_p.height) // 2
                     catalogo.paste(img_p, (pos_x, pos_y), img_p)
 
-                    # Escalonamento com redução de ~30%
                     fator_escala = {
                         "Pequeno": 0.12, 
                         "Médio": 0.15, 
@@ -1026,23 +1065,25 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                         prod["preco"],
                         x_inicio_area_preco,
                         x_fim_area_preco,
-                        area_foto_top + (max_foto_h // 2),
+                        area_foto_top + (max_foto_h_total // 2),
                         cor_preco_final,
                         tam_fonte_preco,
                         fonte_preco,
                     )
                 else:
-                    # Centralização padrão quando não há preço
+                    # ==========================================
+                    # MODO PADRÃO (Sem Preço): Foto Centralizada
+                    # ==========================================
                     max_foto_w = card_w - 16
                     img_p = redimensionar_proporcional(
                         prod["imagem"],
                         max_foto_w,
-                        max_foto_h,
+                        max_foto_h_total,
                         fator_zoom=fator_zoom,
                     )
 
                     pos_x = card_x1 + (card_w - img_p.width) // 2
-                    pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
+                    pos_y = area_foto_top + (max_foto_h_total - img_p.height) // 2
                     catalogo.paste(img_p, (pos_x, pos_y), img_p)
 
                 if prod["desconto"]:
