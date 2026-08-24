@@ -248,7 +248,6 @@ def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
 
 
 def criar_banner_com_blur(img_banner, larg_alvo, alt_alvo):
-    """Cria um banner ajustado proporcionalmente no centro com as sobras borradas (Blur)."""
     bg_blur = img_banner.resize((larg_alvo, alt_alvo), Image.Resampling.LANCZOS)
     bg_blur = bg_blur.filter(ImageFilter.GaussianBlur(radius=25))
 
@@ -262,7 +261,6 @@ def criar_banner_com_blur(img_banner, larg_alvo, alt_alvo):
 
 
 def quebrar_texto_por_largura(draw, texto, fonte, largura_maxima):
-    """Quebra as linhas de acordo com a largura limite em pixels."""
     palavras = texto.split()
     if not palavras:
         return []
@@ -585,7 +583,7 @@ tam_descricao_custom = st.sidebar.slider(
     step=1,
 )
 
-# --- NOVAS OPÇÕES DE PERSONALIZAÇÃO DE DESCRIÇÃO ---
+# --- OPÇÕES DE PERSONALIZAÇÃO DE DESCRIÇÃO ---
 st.sidebar.subheader("🎨 Personalização da Descrição do Produto")
 
 formatar_caixa_alta = st.sidebar.checkbox("Usar Caixa Alta (MAIÚSCULAS)", value=True)
@@ -601,7 +599,7 @@ else:
 
 # Cor do Box de Fundo da Descrição
 sel_cor_box_desc = st.sidebar.selectbox(
-    "Cor do Box da Descrição (Fundo)", list(OPCOES_CORES.keys()), index=9 # Transparente por padrão
+    "Cor do Box da Descrição (Fundo)", list(OPCOES_CORES.keys()), index=9
 )
 if OPCOES_CORES[sel_cor_box_desc] == "CUSTOM":
     cor_box_desc = st.sidebar.text_input("Hexadecimal do Box (#HEX)", "#D32F2F")
@@ -836,16 +834,22 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 # Processamento do Título / Descrição
                 texto_titulo = prod["titulo"].upper() if formatar_caixa_alta else prod["titulo"]
                 
-                # Respeita o padding horizontal para que o texto nunca encoste nas laterais da caixa
                 largura_util_texto = card_w - (padding_h_desc * 2)
                 titulos_wrapped = quebrar_texto_por_largura(
                     draw, texto_titulo, fonte_prod_titulo, largura_util_texto
-                )[:2] # Limita a até 2 linhas
+                )[:2]
 
                 espacamento_linha = int(tamanho_fonte_tit * 1.2)
                 altura_titulos = len(titulos_wrapped) * espacamento_linha
                 
-                y_cod = card_y2 - 12 - altura_titulos - tamanho_fonte_cod - (padding_v_desc * 2)
+                # Margem de distanciamento entre a linha do Código e o Box de Descrição
+                margin_bottom_cod = 6
+                
+                # Posição Y do topo da descrição (ou box)
+                box_top_y = card_y2 - 10 - altura_titulos - (padding_v_desc * 2)
+                
+                # Posição Y do código ajustada para ficar acima do box da descrição sem encostar
+                y_cod = box_top_y - tamanho_fonte_cod - margin_bottom_cod
 
                 texto_cod = f"COD: {prod['codigo']}"
                 if prod["validade"]:
@@ -861,14 +865,14 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     font=fonte_prod_codigo,
                 )
 
-                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4 + padding_v_desc
+                y_t = box_top_y + padding_v_desc
 
-                # Desenho opcional da caixa/box com cor na descrição
+                # Desenho da caixa/box com cor na descrição (se ativa)
                 if cor_box_desc != "TRANSPARENTE":
                     box_desc_x1 = card_x1 + padding_h_desc
                     box_desc_x2 = card_x2 - padding_h_desc
-                    box_desc_y1 = y_t - padding_v_desc
-                    box_desc_y2 = y_t + altura_titulos + padding_v_desc - 2
+                    box_desc_y1 = box_top_y
+                    box_desc_y2 = box_top_y + altura_titulos + (padding_v_desc * 2)
 
                     draw.rounded_rectangle(
                         [box_desc_x1, box_desc_y1, box_desc_x2, box_desc_y2],
@@ -891,7 +895,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 # Área reservada para a imagem do produto
                 area_foto_top = card_y1 + 8
-                area_foto_bottom = y_cod - 6
+                area_foto_bottom = y_cod - 4
                 max_foto_h = area_foto_bottom - area_foto_top
                 max_foto_w = card_w - 16
 
