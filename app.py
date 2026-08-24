@@ -154,8 +154,11 @@ OPCOES_CORES = {
     "Verde": "#2E7D32",
     "Azul": "#1976D2",
     "Laranja": "#E65100",
+    "Cinza Escuro": "#444444",
     "Cinza Claro": "#F0F2F5",
     "Branco": "#FFFFFF",
+    "Transparente / Nenhum": "TRANSPARENTE",
+    "🎨 Usar Hexadecimal Personalizado": "CUSTOM"
 }
 
 # ==========================================
@@ -246,19 +249,38 @@ def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
 
 def criar_banner_com_blur(img_banner, larg_alvo, alt_alvo):
     """Cria um banner ajustado proporcionalmente no centro com as sobras borradas (Blur)."""
-    # 1. Imagem de fundo esticada + Blur
     bg_blur = img_banner.resize((larg_alvo, alt_alvo), Image.Resampling.LANCZOS)
     bg_blur = bg_blur.filter(ImageFilter.GaussianBlur(radius=25))
 
-    # 2. Redimensionar original mantendo a proporção exata
     img_fit = redimensionar_proporcional(img_banner, larg_alvo, alt_alvo)
 
-    # 3. Sobrepor a imagem limpa e proporcional no centro do fundo desfocado
     x_pos = (larg_alvo - img_fit.width) // 2
     y_pos = (alt_alvo - img_fit.height) // 2
 
     bg_blur.paste(img_fit, (x_pos, y_pos), img_fit)
     return bg_blur
+
+
+def quebrar_texto_por_largura(draw, texto, fonte, largura_maxima):
+    """Quebra as linhas de acordo com a largura limite em pixels."""
+    palavras = texto.split()
+    if not palavras:
+        return []
+
+    linhas = []
+    linha_atual = palavras[0]
+
+    for palavra in palavras[1:]:
+        test_line = linha_atual + " " + palavra
+        bbox = draw.textbbox((0, 0), test_line, font=fonte)
+        largura_teste = bbox[2] - bbox[0]
+        if largura_teste <= largura_maxima:
+            linha_atual = test_line
+        else:
+            linhas.append(linha_atual)
+            linha_atual = palavra
+    linhas.append(linha_atual)
+    return linhas
 
 
 def desenhar_selo_no_card(
@@ -332,7 +354,7 @@ def desenhar_texto_alinhado(
     return y + (bbox[3] - bbox[1]) + 8
 
 # ==========================================
-# PAINEL LATERAL (VARREDURA DE BANNERS E CONFIGURAÇÕES)
+# PAINEL LATERAL
 # ==========================================
 arquivos_banners = []
 
@@ -563,6 +585,36 @@ tam_descricao_custom = st.sidebar.slider(
     step=1,
 )
 
+# --- NOVAS OPÇÕES DE PERSONALIZAÇÃO DE DESCRIÇÃO ---
+st.sidebar.subheader("🎨 Personalização da Descrição do Produto")
+
+formatar_caixa_alta = st.sidebar.checkbox("Usar Caixa Alta (MAIÚSCULAS)", value=True)
+
+# Cor do Texto da Descrição
+sel_cor_texto_desc = st.sidebar.selectbox(
+    "Cor do Texto da Descrição", list(OPCOES_CORES.keys()), index=6
+)
+if OPCOES_CORES[sel_cor_texto_desc] == "CUSTOM":
+    cor_texto_desc = st.sidebar.text_input("Hexadecimal da Cor do Texto (#HEX)", "#444444")
+else:
+    cor_texto_desc = OPCOES_CORES[sel_cor_texto_desc]
+
+# Cor do Box de Fundo da Descrição
+sel_cor_box_desc = st.sidebar.selectbox(
+    "Cor do Box da Descrição (Fundo)", list(OPCOES_CORES.keys()), index=9 # Transparente por padrão
+)
+if OPCOES_CORES[sel_cor_box_desc] == "CUSTOM":
+    cor_box_desc = st.sidebar.text_input("Hexadecimal do Box (#HEX)", "#D32F2F")
+else:
+    cor_box_desc = OPCOES_CORES[sel_cor_box_desc]
+
+# Margens internas (Padding)
+col_pad1, col_pad2 = st.sidebar.columns(2)
+with col_pad1:
+    padding_h_desc = st.number_input("Padding Esq/Direita (px)", min_value=3, max_value=30, value=6)
+with col_pad2:
+    padding_v_desc = st.number_input("Padding Top/Base (px)", min_value=0, max_value=20, value=4)
+
 zoom_porcentagem = st.sidebar.slider(
     "🔍 Zoom da Imagem do Produto",
     min_value=100,
@@ -684,11 +736,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             draw = ImageDraw.Draw(catalogo)
 
-            # --- 1. CABEÇALHO (COM INTELIGÊNCIA DE BLUR PARA STORIES) ---
+            # --- 1. CABEÇALHO ---
             if banner_imagem_ativa:
                 alt_banner_alvo = ALTURA_CABECALHO - 15
                 
-                # Aplica preenchimento com Blur para manter proporção e estética no Stories
                 if "Stories" in opcao_formato:
                     banner_final = criar_banner_com_blur(
                         banner_imagem_ativa, LARGURA_MAX, alt_banner_alvo
@@ -759,6 +810,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             padding_card = 8 if cols == 4 else 12
             card_w = largura_slot - (padding_card * 2)
             card_h = altura_slot - (padding_card * 2)
+            card_radius = 12 if cols == 4 else 14
 
             for idx, prod in enumerate(produtos_carregados):
                 c = idx % cols
@@ -772,33 +824,34 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 card_x2 = card_x1 + card_w
                 card_y2 = card_y1 + card_h
 
+                # Desenha o Card Principal
                 draw.rounded_rectangle(
                     [card_x1, card_y1, card_x2, card_y2],
-                    radius=12 if cols == 4 else 14,
+                    radius=card_radius,
                     fill="white",
                     outline="#E0E0E0",
                     width=1,
                 )
 
-                char_limite = max(10, card_w // (14 if total == 1 else 10))
-                titulos_wrapped = textwrap.wrap(
-                    prod["titulo"], width=char_limite
-                )[:2]
+                # Processamento do Título / Descrição
+                texto_titulo = prod["titulo"].upper() if formatar_caixa_alta else prod["titulo"]
+                
+                # Respeita o padding horizontal para que o texto nunca encoste nas laterais da caixa
+                largura_util_texto = card_w - (padding_h_desc * 2)
+                titulos_wrapped = quebrar_texto_por_largura(
+                    draw, texto_titulo, fonte_prod_titulo, largura_util_texto
+                )[:2] # Limita a até 2 linhas
 
                 espacamento_linha = int(tamanho_fonte_tit * 1.2)
                 altura_titulos = len(titulos_wrapped) * espacamento_linha
-                y_texto_base = (
-                    card_y2 - 12 - altura_titulos - tamanho_fonte_cod
-                )
-                y_cod = y_texto_base
+                
+                y_cod = card_y2 - 12 - altura_titulos - tamanho_fonte_cod - (padding_v_desc * 2)
 
                 texto_cod = f"COD: {prod['codigo']}"
                 if prod["validade"]:
                     texto_cod += f" - {prod['validade']}"
 
-                bbox_cod = draw.textbbox(
-                    (0, 0), texto_cod, font=fonte_prod_codigo
-                )
+                bbox_cod = draw.textbbox((0, 0), texto_cod, font=fonte_prod_codigo)
                 w_cod = bbox_cod[2] - bbox_cod[0]
                 x_cod = card_x1 + (card_w - w_cod) // 2
                 draw.text(
@@ -808,21 +861,35 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     font=fonte_prod_codigo,
                 )
 
-                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4
-                for t_linha in titulos_wrapped:
-                    bbox_tit = draw.textbbox(
-                        (0, 0), t_linha, font=fonte_prod_titulo
+                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4 + padding_v_desc
+
+                # Desenho opcional da caixa/box com cor na descrição
+                if cor_box_desc != "TRANSPARENTE":
+                    box_desc_x1 = card_x1 + padding_h_desc
+                    box_desc_x2 = card_x2 - padding_h_desc
+                    box_desc_y1 = y_t - padding_v_desc
+                    box_desc_y2 = y_t + altura_titulos + padding_v_desc - 2
+
+                    draw.rounded_rectangle(
+                        [box_desc_x1, box_desc_y1, box_desc_x2, box_desc_y2],
+                        radius=max(4, card_radius // 2),
+                        fill=cor_box_desc
                     )
+
+                # Renderização das linhas de descrição
+                for t_linha in titulos_wrapped:
+                    bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
                     w_tit = bbox_tit[2] - bbox_tit[0]
                     x_tit = card_x1 + (card_w - w_tit) // 2
                     draw.text(
                         (x_tit, y_t),
                         t_linha,
-                        fill="#444444",
+                        fill=cor_texto_desc,
                         font=fonte_prod_titulo,
                     )
                     y_t += espacamento_linha
 
+                # Área reservada para a imagem do produto
                 area_foto_top = card_y1 + 8
                 area_foto_bottom = y_cod - 6
                 max_foto_h = area_foto_bottom - area_foto_top
