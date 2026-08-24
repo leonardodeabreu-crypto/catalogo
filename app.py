@@ -388,7 +388,6 @@ def tratar_e_desenhar_preco(
     w_total = w_rs + w_int + w_cent
     largura_disponivel = x_max - x_min
 
-    # Trava de segurança para não ultrapassar limites do container
     if w_total > largura_disponivel and tamanho_base > 10:
         fator_reducao = largura_disponivel / w_total
         novo_tam = max(8, int(tamanho_base * fator_reducao))
@@ -990,9 +989,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 tem_preco = bool(prod["preco"] and prod["preco"].strip())
 
-                if tem_preco and cols <= 3:
+                # REGRA CORRIGIDA: Valida pela QUANTIDADE TOTAL de produtos cadastrados
+                if tem_preco and total <= 3:
                     # ==========================================
-                    # MODO VERTICAL (1 a 3 produtos): Foto em Cima, Preço em Baixo
+                    # MODO VERTICAL (Até 3 produtos): Foto no Topo, Preço Embaixo
                     # ==========================================
                     altura_disponivel_foto = int(max_foto_h_total * 0.65)
                     altura_disponivel_preco = max_foto_h_total - altura_disponivel_foto
@@ -1033,7 +1033,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 elif tem_preco:
                     # ==========================================
-                    # MODO HORIZONTAL (4+ produtos): Foto na Esquerda, Preço na Direita
+                    # MODO HORIZONTAL (4+ produtos, incl. 6 prod): Foto na Esquerda, Preço na Direita
                     # ==========================================
                     largura_foto_area = int(card_w * 0.48)
                     max_foto_w = largura_foto_area - 12
