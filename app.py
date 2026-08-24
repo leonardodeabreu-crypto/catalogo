@@ -2,7 +2,6 @@ import io
 import json
 import os
 import re
-import textwrap
 import time
 import urllib3
 from bs4 import BeautifulSoup
@@ -93,6 +92,11 @@ if not st.session_state["autenticado"]:
 # GERENCIAMENTO DE FONTES
 # ==========================================
 OPCOES_FONTES = {
+    "Impact (Encarte Forte)": [
+        "Impact.ttf",
+        "impact.ttf",
+        "LiberationSans-Bold.ttf",
+    ],
     "Padrão Negrito (Liberation / Arial)": [
         "LiberationSans-Bold.ttf",
         "arialbd.ttf",
@@ -102,11 +106,6 @@ OPCOES_FONTES = {
         "LiberationSans-Regular.ttf",
         "arial.ttf",
         "DejaVuSans.ttf",
-    ],
-    "Encarte Promocional (Impact / Serif)": [
-        "Impact.ttf",
-        "LiberationSerif-Bold.ttf",
-        "DejaVuSerif-Bold.ttf",
     ],
     "Condensada / Estreita": [
         "LiberationSansNarrow-Bold.ttf",
@@ -148,11 +147,11 @@ if st.sidebar.button("🚪 Sair do Sistema"):
     st.rerun()
 
 OPCOES_CORES = {
+    "Azul": "#0038A8",
     "Vermelho Oferta": "#D32F2F",
     "Amarelo Encarte": "#FBC02D",
     "Escuro Churrasco": "#1E1E1E",
     "Verde": "#2E7D32",
-    "Azul": "#1976D2",
     "Laranja": "#E65100",
     "Cinza Escuro": "#444444",
     "Cinza Claro": "#F0F2F5",
@@ -351,6 +350,64 @@ def desenhar_texto_alinhado(
     draw.text((x, y), texto, fill=cor, font=fonte)
     return y + (bbox[3] - bbox[1]) + 8
 
+def tratar_e_desenhar_preco(
+    draw, texto_preco, center_x, center_y, cor_preco, tamanho_base, estilo_fonte
+):
+    if not texto_preco or not texto_preco.strip():
+        return
+
+    # Tratamento da string do preço
+    val_limpo = texto_preco.strip().replace("R$", "").replace(" ", "").replace(".", ",")
+    if "," in val_limpo:
+        partes = val_limpo.split(",")
+        inteiro = partes[0]
+        centavos = partes[1][:2].ljust(2, "0")
+    else:
+        inteiro = val_limpo
+        centavos = "00"
+
+    txt_rs = "R$"
+    txt_int = f" {inteiro},"
+    txt_cent = centavos
+
+    tam_rs = int(tamanho_base * 0.55)
+    tam_int = int(tamanho_base)
+    tam_cent = int(tamanho_base * 0.52)
+
+    fonte_rs = carregar_fonte(estilo_fonte, tam_rs)
+    fonte_int = carregar_fonte(estilo_fonte, tam_int)
+    fonte_cent = carregar_fonte(estilo_fonte, tam_cent)
+
+    bbox_rs = draw.textbbox((0, 0), txt_rs, font=fonte_rs)
+    bbox_int = draw.textbbox((0, 0), txt_int, font=fonte_int)
+    bbox_cent = draw.textbbox((0, 0), txt_cent, font=fonte_cent)
+
+    w_rs = bbox_rs[2] - bbox_rs[0]
+    w_int = bbox_int[2] - bbox_int[0]
+    w_cent = bbox_cent[2] - bbox_cent[0]
+
+    w_total = w_rs + w_int + w_cent
+
+    start_x = center_x - (w_total // 2)
+
+    # Medidas de altura
+    h_int = bbox_int[3] - bbox_int[1]
+    base_y = center_y + (h_int // 2)
+
+    # Desenha R$
+    y_rs = base_y - (bbox_rs[3] - bbox_rs[1]) - 4
+    draw.text((start_x, y_rs), txt_rs, fill=cor_preco, font=fonte_rs)
+
+    # Desenha Inteiro + Vírgula
+    x_int = start_x + w_rs
+    y_int = base_y - h_int
+    draw.text((x_int, y_int), txt_int, fill=cor_preco, font=fonte_int)
+
+    # Desenha Centavos sobrescritos
+    x_cent = x_int + w_int
+    y_cent = y_int + 2
+    draw.text((x_cent, y_cent), txt_cent, fill=cor_preco, font=fonte_cent)
+
 # ==========================================
 # PAINEL LATERAL
 # ==========================================
@@ -442,7 +499,7 @@ if banner_imagem_ativa is None:
 
     frase_1 = st.sidebar.text_input("Frase Principal", "OFERTAS DA SEMANA")
     fonte_1 = st.sidebar.selectbox(
-        "Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=0
+        "Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=1
     )
     col_a, col_b, col_c = st.sidebar.columns(3)
     with col_a:
@@ -461,7 +518,7 @@ if banner_imagem_ativa is None:
         "Slogan / Subtítulo", "Preços Imbatíveis e Qualidade Garantida!"
     )
     fonte_2 = st.sidebar.selectbox(
-        "Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=1
+        "Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=2
     )
     col_d, col_e, col_f = st.sidebar.columns(3)
     with col_d:
@@ -470,7 +527,7 @@ if banner_imagem_ativa is None:
         )
     with col_e:
         cor_2 = OPCOES_CORES[
-            st.selectbox("Cor #2", list(OPCOES_CORES.keys()), index=2)
+            st.selectbox("Cor #2", list(OPCOES_CORES.keys()), index=3)
         ]
     with col_f:
         tam_2 = st.slider("Tam #2", 12, 40, 20)
@@ -558,7 +615,7 @@ frase_rodape = st.sidebar.text_input(
     "Frase Rodapé", "Ofertas válidas enquanto durarem os estoques."
 )
 fonte_r = st.sidebar.selectbox(
-    "Estilo Fonte Rodapé", list(OPCOES_FONTES.keys()), index=0
+    "Estilo Fonte Rodapé", list(OPCOES_FONTES.keys()), index=1
 )
 col_g, col_h, col_i = st.sidebar.columns(3)
 with col_g:
@@ -567,13 +624,36 @@ with col_g:
     )
 with col_h:
     cor_r = OPCOES_CORES[
-        st.selectbox("Cor Rodapé", list(OPCOES_CORES.keys()), index=2)
+        st.selectbox("Cor Rodapé", list(OPCOES_CORES.keys()), index=3)
     ]
 with col_i:
     tam_r = st.slider("Tam Rodapé", 12, 30, 16)
 
 st.sidebar.markdown("---")
-st.sidebar.header("🛒 4. Cadastro de Produtos e Fontes")
+st.sidebar.header("🏷️ Configurações Globais do Preço")
+
+sel_cor_preco = st.sidebar.selectbox(
+    "Cor do Preço", list(OPCOES_CORES.keys()), index=0
+)
+if OPCOES_CORES[sel_cor_preco] == "CUSTOM":
+    cor_preco_final = st.sidebar.text_input("Hexadecimal da Cor do Preço (#HEX)", "#0038A8")
+else:
+    cor_preco_final = OPCOES_CORES[sel_cor_preco]
+
+tamanho_preco_opcao = st.sidebar.select_slider(
+    "Tamanho do Preço",
+    options=["Pequeno", "Médio", "Grande"],
+    value="Grande",
+)
+
+fonte_preco = st.sidebar.selectbox(
+    "Estilo de Fonte do Preço",
+    list(OPCOES_FONTES.keys()),
+    index=0,
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("🛒 4. Cadastro de Produtos")
 
 tam_descricao_custom = st.sidebar.slider(
     "🔤 Tamanho da Descrição do Produto",
@@ -583,30 +663,26 @@ tam_descricao_custom = st.sidebar.slider(
     step=1,
 )
 
-# --- OPÇÕES DE PERSONALIZAÇÃO DE DESCRIÇÃO ---
 st.sidebar.subheader("🎨 Personalização da Descrição do Produto")
 
 formatar_caixa_alta = st.sidebar.checkbox("Usar Caixa Alta (MAIÚSCULAS)", value=True)
 
-# Cor do Texto da Descrição
 sel_cor_texto_desc = st.sidebar.selectbox(
-    "Cor do Texto da Descrição", list(OPCOES_CORES.keys()), index=6
+    "Cor do Texto da Descrição", list(OPCOES_CORES.keys()), index=8
 )
 if OPCOES_CORES[sel_cor_texto_desc] == "CUSTOM":
-    cor_texto_desc = st.sidebar.text_input("Hexadecimal da Cor do Texto (#HEX)", "#444444")
+    cor_texto_desc = st.sidebar.text_input("Hexadecimal da Cor do Texto (#HEX)", "#FFFFFF")
 else:
     cor_texto_desc = OPCOES_CORES[sel_cor_texto_desc]
 
-# Cor do Box de Fundo da Descrição
 sel_cor_box_desc = st.sidebar.selectbox(
-    "Cor do Box da Descrição (Fundo)", list(OPCOES_CORES.keys()), index=9
+    "Cor do Box da Descrição (Fundo)", list(OPCOES_CORES.keys()), index=0
 )
 if OPCOES_CORES[sel_cor_box_desc] == "CUSTOM":
-    cor_box_desc = st.sidebar.text_input("Hexadecimal do Box (#HEX)", "#D32F2F")
+    cor_box_desc = st.sidebar.text_input("Hexadecimal do Box (#HEX)", "#0038A8")
 else:
     cor_box_desc = OPCOES_CORES[sel_cor_box_desc]
 
-# Margens internas (Padding)
 col_pad1, col_pad2 = st.sidebar.columns(2)
 with col_pad1:
     padding_h_desc = st.number_input("Padding Esq/Direita (px)", min_value=3, max_value=30, value=6)
@@ -624,7 +700,7 @@ fator_zoom = zoom_porcentagem / 100.0
 
 OPCOES_QUANTIDADE = [1, 2, 3, 6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
-    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=3
+    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=2
 )
 
 produtos_inputs = []
@@ -636,17 +712,21 @@ for i in range(num_produtos):
     with col2:
         desc = st.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
 
-    val = st.sidebar.text_input(f"Validade Ex: val: 08/08/2026", key=f"val_{i}")
+    col3, col4 = st.sidebar.columns([2, 2])
+    with col3:
+        preco_val = st.text_input(f"Preço (ex: 57,90)", key=f"preco_{i}")
+    with col4:
+        val = st.text_input(f"Validade", key=f"val_{i}")
 
     if cod.strip():
         produtos_inputs.append({
             "codigo": cod.strip(),
             "desconto": desc.strip(),
             "validade": val.strip(),
+            "preco": preco_val.strip(),
             "cod_parana": "",
         })
 
-# --- MODO PARANÁ ---
 st.sidebar.markdown("---")
 modo_parana = st.sidebar.checkbox(
     "🌲 Modo Paraná (Substituir Códigos)",
@@ -683,6 +763,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 dados["imagem"] = img
                 dados["desconto"] = item["desconto"]
                 dados["validade"] = item["validade"]
+                dados["preco"] = item["preco"]
 
                 if modo_parana and item["cod_parana"]:
                     dados["codigo"] = item["cod_parana"]
@@ -737,7 +818,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             # --- 1. CABEÇALHO ---
             if banner_imagem_ativa:
                 alt_banner_alvo = ALTURA_CABECALHO - 15
-                
+
                 if "Stories" in opcao_formato:
                     banner_final = criar_banner_com_blur(
                         banner_imagem_ativa, LARGURA_MAX, alt_banner_alvo
@@ -747,7 +828,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                         (LARGURA_MAX, alt_banner_alvo),
                         Image.Resampling.LANCZOS,
                     )
-                
+
                 catalogo.paste(banner_final, (0, 0), banner_final)
             else:
                 x_inicio_texto = 40
@@ -814,13 +895,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 slot_x = c * largura_slot
                 slot_y = ALTURA_CABECALHO + (l * altura_slot)
 
-                # CÁLCULO PROPORCIONAL DE ALTURA DO CARD
-                # Impede que cards de layouts com poucas linhas (ex: 1x3) fiquem desproporcionalmente altos
                 card_w = largura_slot - (padding_card * 2)
-                altura_max_ideal = int(card_w * 1.45) # Proporção harmônica altura x largura
+                altura_max_ideal = int(card_w * 1.45)
                 card_h = min(altura_slot - (padding_card * 2), altura_max_ideal)
 
-                # Centralização vertical dentro do slot
                 offset_y_centro = (altura_slot - card_h) // 2
 
                 card_x1 = slot_x + padding_card
@@ -829,7 +907,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 card_y2 = card_y1 + card_h
                 card_radius = 12 if cols == 4 else 14
 
-                # Desenha o Card Principal
                 draw.rounded_rectangle(
                     [card_x1, card_y1, card_x2, card_y2],
                     radius=card_radius,
@@ -838,9 +915,8 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     width=1,
                 )
 
-                # Processamento do Título / Descrição
                 texto_titulo = prod["titulo"].upper() if formatar_caixa_alta else prod["titulo"]
-                
+
                 largura_util_texto = card_w - (padding_h_desc * 2)
                 titulos_wrapped = quebrar_texto_por_largura(
                     draw, texto_titulo, fonte_prod_titulo, largura_util_texto
@@ -848,14 +924,9 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 espacamento_linha = int(tamanho_fonte_tit * 1.2)
                 altura_titulos = len(titulos_wrapped) * espacamento_linha
-                
-                # Margem de distanciamento entre a linha do Código e o Box de Descrição
+
                 margin_bottom_cod = 6
-                
-                # Posição Y do topo da descrição (ou box)
                 box_top_y = card_y2 - 10 - altura_titulos - (padding_v_desc * 2)
-                
-                # Posição Y do código ajustada para ficar acima do box da descrição sem encostar
                 y_cod = box_top_y - tamanho_fonte_cod - margin_bottom_cod
 
                 texto_cod = f"COD: {prod['codigo']}"
@@ -874,7 +945,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 y_t = box_top_y + padding_v_desc
 
-                # Desenho da caixa/box com cor na descrição (se ativa)
                 if cor_box_desc != "TRANSPARENTE":
                     box_desc_x1 = card_x1 + padding_h_desc
                     box_desc_x2 = card_x2 - padding_h_desc
@@ -887,7 +957,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                         fill=cor_box_desc
                     )
 
-                # Renderização das linhas de descrição
                 for t_linha in titulos_wrapped:
                     bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
                     w_tit = bbox_tit[2] - bbox_tit[0]
@@ -900,23 +969,58 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     )
                     y_t += espacamento_linha
 
-                # Área reservada para a imagem do produto
+                # ÁREA DA FOTO E PREÇO
                 area_foto_top = card_y1 + 8
-                area_foto_bottom = y_cod - 4
+                area_foto_bottom = y_cod - 6
                 max_foto_h = area_foto_bottom - area_foto_top
-                max_foto_w = card_w - 16
 
-                img_p = redimensionar_proporcional(
-                    prod["imagem"],
-                    max_foto_w,
-                    max_foto_h,
-                    fator_zoom=fator_zoom,
-                )
+                tem_preco = bool(prod["preco"] and prod["preco"].strip())
 
-                pos_x = card_x1 + (card_w - img_p.width) // 2
-                pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
+                if tem_preco:
+                    # Divisão em duas colunas (Esquerda: Foto | Direita: Preço)
+                    largura_foto_area = int(card_w * 0.48)
+                    max_foto_w = largura_foto_area - 12
 
-                catalogo.paste(img_p, (pos_x, pos_y), img_p)
+                    img_p = redimensionar_proporcional(
+                        prod["imagem"],
+                        max_foto_w,
+                        max_foto_h,
+                        fator_zoom=fator_zoom,
+                    )
+
+                    pos_x = card_x1 + 8 + (max_foto_w - img_p.width) // 2
+                    pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
+                    catalogo.paste(img_p, (pos_x, pos_y), img_p)
+
+                    # Cálculo do Tamanho da Fonte do Preço
+                    fator_escala = {"Pequeno": 0.18, "Médio": 0.22, "Grande": 0.27}[tamanho_preco_opcao]
+                    tam_fonte_preco = int(card_w * fator_escala)
+
+                    centro_x_preco = card_x1 + largura_foto_area + int((card_w - largura_foto_area) / 2)
+                    centro_y_preco = area_foto_top + (max_foto_h // 2)
+
+                    tratar_e_desenhar_preco(
+                        draw,
+                        prod["preco"],
+                        centro_x_preco,
+                        centro_y_preco,
+                        cor_preco_final,
+                        tam_fonte_preco,
+                        fonte_preco,
+                    )
+                else:
+                    # Centralizado padrão caso não haja preço
+                    max_foto_w = card_w - 16
+                    img_p = redimensionar_proporcional(
+                        prod["imagem"],
+                        max_foto_w,
+                        max_foto_h,
+                        fator_zoom=fator_zoom,
+                    )
+
+                    pos_x = card_x1 + (card_w - img_p.width) // 2
+                    pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
+                    catalogo.paste(img_p, (pos_x, pos_y), img_p)
 
                 if prod["desconto"]:
                     desenhar_selo_no_card(
