@@ -352,25 +352,41 @@ def ajustar_e_quebrar_texto(texto, fonte, max_largura, draw):
 
 
 def aplicar_marca_dagua(imagem_base, largura, altura, texto="PREÇO EXCLUSIVO COLABORADOR"):
-    """Aplica marca d'água repetida na diagonal com ~25% de opacidade."""
+    """Aplica marca d'água repetida na diagonal com ~15% de opacidade
+    e espaçamento corrigido para não truncar o texto.
+    """
     overlay = Image.new("RGBA", (largura * 2, altura * 2), (255, 255, 255, 0))
     draw_overlay = ImageDraw.Draw(overlay)
-    
-    fonte_watermark = carregar_fonte("Padrão Negrito (Liberation / Arial)", 24)
-    cor_texto_transparente = (80, 80, 80, 64)  # Cinza com Alpha = 64 (~25% opacidade)
-    
-    passo_x = 420
-    passo_y = 140
 
+    fonte_watermark = carregar_fonte("Padrão Negrito (Liberation / Arial)", 22)
+
+    # Alpha 38 = ~15% de opacidade (mais suave)
+    cor_texto_transparente = (80, 80, 80, 38)
+
+    passo_x = 600
+    passo_y = 85
+
+    linha_idx = 0
     for y in range(-altura, altura * 2, passo_y):
-        for x in range(-largura, largura * 2, passo_x):
-            draw_overlay.text((x, y), texto, fill=cor_texto_transparente, font=fonte_watermark)
+        offset_x = (linha_idx % 2) * (passo_x // 2)
+        for x in range(-largura - offset_x, largura * 2, passo_x):
+            draw_overlay.text(
+                (x + offset_x, y),
+                texto,
+                fill=cor_texto_transparente,
+                font=fonte_watermark,
+            )
+        linha_idx += 1
 
-    overlay_rotacionado = overlay.rotate(-30, resample=Image.Resampling.BICUBIC, expand=False)
-    
+    overlay_rotacionado = overlay.rotate(
+        -30, resample=Image.Resampling.BICUBIC, expand=False
+    )
+
     crop_x = (overlay_rotacionado.width - largura) // 2
     crop_y = (overlay_rotacionado.height - altura) // 2
-    overlay_cortado = overlay_rotacionado.crop((crop_x, crop_y, crop_x + largura, crop_y + altura))
+    overlay_cortado = overlay_rotacionado.crop(
+        (crop_x, crop_y, crop_x + largura, crop_y + altura)
+    )
 
     return Image.alpha_composite(imagem_base.convert("RGBA"), overlay_cortado)
 
