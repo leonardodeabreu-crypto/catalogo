@@ -245,7 +245,6 @@ def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
 
 
 def criar_banner_com_blur(img_banner, larg_alvo, alt_alvo):
-    """Cria um banner ajustado proporcionalmente no centro com as sobras borradas (Blur)."""
     bg_blur = img_banner.resize((larg_alvo, alt_alvo), Image.Resampling.LANCZOS)
     bg_blur = bg_blur.filter(ImageFilter.GaussianBlur(radius=25))
 
@@ -330,7 +329,6 @@ def desenhar_texto_alinhado(
 
 
 def ajustar_e_quebrar_texto(texto, fonte, max_largura, draw):
-    """Quebra o texto rigorosamente para não ultrapassar max_largura em pixels."""
     palavras = texto.split()
     linhas = []
     linha_atual = ""
@@ -352,8 +350,32 @@ def ajustar_e_quebrar_texto(texto, fonte, max_largura, draw):
 
     return linhas
 
+
+def aplicar_marca_dagua(imagem_base, largura, altura, texto="PREÇO EXCLUSIVO COLABORADOR"):
+    """Aplica marca d'água repetida na diagonal com ~25% de opacidade."""
+    overlay = Image.new("RGBA", (largura * 2, altura * 2), (255, 255, 255, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
+    
+    fonte_watermark = carregar_fonte("Padrão Negrito (Liberation / Arial)", 24)
+    cor_texto_transparente = (80, 80, 80, 64)  # Cinza com Alpha = 64 (~25% opacidade)
+    
+    passo_x = 420
+    passo_y = 140
+
+    for y in range(-altura, altura * 2, passo_y):
+        for x in range(-largura, largura * 2, passo_x):
+            draw_overlay.text((x, y), texto, fill=cor_texto_transparente, font=fonte_watermark)
+
+    overlay_rotacionado = overlay.rotate(-30, resample=Image.Resampling.BICUBIC, expand=False)
+    
+    crop_x = (overlay_rotacionado.width - largura) // 2
+    crop_y = (overlay_rotacionado.height - altura) // 2
+    overlay_cortado = overlay_rotacionado.crop((crop_x, crop_y, crop_x + largura, crop_y + altura))
+
+    return Image.alpha_composite(imagem_base.convert("RGBA"), overlay_cortado)
+
 # ==========================================
-# PAINEL LATERAL (VARREDURA DE BANNERS E CONFIGURAÇÕES)
+# PAINEL LATERAL
 # ==========================================
 arquivos_banners = []
 
@@ -493,12 +515,10 @@ tipo_fundo = st.sidebar.radio(
 
 bg_custom_file = None
 
-# Cor padrão definida com fallback
 cor_padrao_adm = "#F0F2F5"
 if nome_banner_atual and nome_banner_atual in dict_cores_banners:
     cor_padrao_adm = dict_cores_banners[nome_banner_atual]
 
-# Inicializa a variável para evitar NameError quando selecionada Imagem/Textura
 cor_fundo_catalogo = cor_padrao_adm
 
 if tipo_fundo == "Cor Sólida / Hexadecimal":
@@ -652,11 +672,17 @@ for i in range(num_produtos):
             "cod_parana": "",
         })
 
-# --- MODO PARANÁ ---
+# --- MODO PARANÁ E MARCA D'ÁGUA ---
 st.sidebar.markdown("---")
 modo_parana = st.sidebar.checkbox(
     "🌲 Modo Paraná (Substituir Códigos)",
     value=False,
+)
+
+ativar_marca_dagua = st.sidebar.checkbox(
+    "🔒 Ativar Marca d'Água (Uso Interno)",
+    value=False,
+    help="Adiciona 'PREÇO EXCLUSIVO COLABORADOR' repetido com transparência por cima da arte.",
 )
 
 if modo_parana and produtos_inputs:
@@ -835,12 +861,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     width=1,
                 )
 
-                # Formatação da descrição
                 titulo_formatado = prod["titulo"]
                 if formato_caixa_texto == "CAIXA ALTA (MAIÚSCULAS)":
                     titulo_formatado = titulo_formatado.upper()
 
-                # Padding interno lateral para evitar encostar nas margens da caixinha
                 padding_lateral_texto = 4
                 largura_util_texto = card_w - (padding_lateral_texto * 2)
 
@@ -948,6 +972,10 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 x_inicio=30,
                 x_fim=LARGURA_MAX - 30,
             )
+
+            # --- 4. MARCA D'ÁGUA (SE ATIVADA) ---
+            if ativar_marca_dagua:
+                catalogo = aplicar_marca_dagua(catalogo, LARGURA_MAX, ALTURA_MAX)
 
             # --- EXIBIÇÃO FINAL ---
             catalogo_rgb = catalogo.convert("RGB")
