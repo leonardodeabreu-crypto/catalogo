@@ -662,20 +662,12 @@ for i in range(num_produtos):
     with col2:
         desc = st.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
 
-    col3, col4 = st.sidebar.columns([2, 2])
-    with col3:
-        preco_de = st.text_input(f"De R$ #{i+1}", key=f"pde_{i}")
-    with col4:
-        preco_por = st.text_input(f"Por R$ #{i+1}", key=f"ppor_{i}")
-
     val = st.sidebar.text_input(f"Validade Ex: val: 08/08/2026", key=f"val_{i}")
 
     if cod.strip():
         produtos_inputs.append({
             "codigo": cod.strip(),
             "desconto": desc.strip(),
-            "preco_de": preco_de.strip(),
-            "preco_por": preco_por.strip(),
             "validade": val.strip(),
             "cod_parana": "",
         })
@@ -722,8 +714,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
                 dados["imagem"] = img
                 dados["desconto"] = item["desconto"]
-                dados["preco_de"] = item["preco_de"]
-                dados["preco_por"] = item["preco_por"]
                 dados["validade"] = item["validade"]
 
                 if modo_parana and item["cod_parana"]:
@@ -839,20 +829,12 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             tamanho_fonte_tit = tam_descricao_custom
             tamanho_fonte_cod = max(10, int(tam_descricao_custom * 0.85))
             tamanho_fonte_selo = int(13 * 1.30)
-            tamanho_fonte_preco_de = max(10, int(tam_descricao_custom * 0.80))
-            tamanho_fonte_preco_por = max(16, int(tam_descricao_custom * 1.35))
 
             fonte_prod_titulo = carregar_fonte(
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit
             )
             fonte_prod_codigo = carregar_fonte(
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_cod
-            )
-            fonte_preco_de = carregar_fonte(
-                "Moderna (Liberation Light / Arial)", tamanho_fonte_preco_de
-            )
-            fonte_preco_por = carregar_fonte(
-                "Padrão Negrito (Liberation / Arial)", tamanho_fonte_preco_por
             )
 
             padding_card = 8 if cols == 4 else 12
@@ -896,12 +878,8 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 if usar_box_desc:
                     altura_titulos += (pad_v_box * 2)
 
-                # Reserva de espaço para Preços
-                tem_preco = bool(prod["preco_de"] or prod["preco_por"])
-                altura_precos = (tamanho_fonte_preco_por + 14) if tem_preco else 0
-
                 y_texto_base = (
-                    card_y2 - 10 - altura_precos - altura_titulos - tamanho_fonte_cod
+                    card_y2 - 10 - altura_titulos - tamanho_fonte_cod
                 )
                 y_cod = y_texto_base
 
@@ -949,28 +927,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                         font=fonte_prod_titulo,
                     )
                     y_t += espacamento_linha + (pad_v_box if usar_box_desc else 0)
-
-                # Renderização dos Preços
-                if tem_preco:
-                    y_preco = y_t + 2
-                    if prod["preco_de"]:
-                        txt_de = f"De: R$ {prod['preco_de']}"
-                        bbox_de = draw.textbbox((0, 0), txt_de, font=fonte_preco_de)
-                        w_de = bbox_de[2] - bbox_de[0]
-                        h_de = bbox_de[3] - bbox_de[0]
-                        x_de = card_x1 + (card_w - w_de) // 2
-                        draw.text((x_de, y_preco), txt_de, fill="#777777", font=fonte_preco_de)
-                        # Riscar preço antigo
-                        y_risca = y_preco + (h_de // 2)
-                        draw.line([(x_de, y_risca), (x_de + w_de, y_risca)], fill="#D32F2F", width=2)
-                        y_preco += (bbox_de[3] - bbox_de[1]) + 2
-
-                    if prod["preco_por"]:
-                        txt_por = f"R$ {prod['preco_por']}"
-                        bbox_por = draw.textbbox((0, 0), txt_por, font=fonte_preco_por)
-                        w_por = bbox_por[2] - bbox_por[0]
-                        x_por = card_x1 + (card_w - w_por) // 2
-                        draw.text((x_por, y_preco), txt_por, fill="#D32F2F", font=fonte_preco_por)
 
                 area_foto_top = card_y1 + 8
                 area_foto_bottom = y_cod - 6
