@@ -2,7 +2,6 @@ import io
 import json
 import os
 import re
-import textwrap
 import time
 import urllib3
 from bs4 import BeautifulSoup
@@ -93,6 +92,11 @@ if not st.session_state["autenticado"]:
 # GERENCIAMENTO DE FONTES
 # ==========================================
 OPCOES_FONTES = {
+    "Impact (Encarte Forte)": [
+        "Impact.ttf",
+        "impact.ttf",
+        "LiberationSans-Bold.ttf",
+    ],
     "Padrão Negrito (Liberation / Arial)": [
         "LiberationSans-Bold.ttf",
         "arialbd.ttf",
@@ -102,11 +106,6 @@ OPCOES_FONTES = {
         "LiberationSans-Regular.ttf",
         "arial.ttf",
         "DejaVuSans.ttf",
-    ],
-    "Encarte Promocional (Impact / Serif)": [
-        "Impact.ttf",
-        "LiberationSerif-Bold.ttf",
-        "DejaVuSerif-Bold.ttf",
     ],
     "Condensada / Estreita": [
         "LiberationSansNarrow-Bold.ttf",
@@ -136,6 +135,42 @@ def carregar_fonte(estilo_escolhido, tamanho):
     return ImageFont.load_default()
 
 # ==========================================
+# FUNÇÃO DE MARCA D'ÁGUA (PROTEÇÃO VAZAMENTO)
+# ==========================================
+def aplicar_marca_dagua(imagem_base, texto="PREÇO EXCLUSIVO COLABORADOR", opacidade=35, tamanho_fonte=28):
+    """Cria um padrão repetido e angulado de marca d'água sobre toda a arte."""
+    largura, altura = imagem_base.size
+    
+    # Camada transparente para desenhar o texto
+    overlay = Image.new("RGBA", (largura * 2, altura * 2), (255, 255, 255, 0))
+    draw_overlay = ImageDraw.Draw(overlay)
+    fonte = carregar_fonte("Impact (Encarte Forte)", tamanho_fonte)
+    
+    # Medidas do texto
+    bbox = draw_overlay.textbbox((0, 0), texto, font=fonte)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    
+    step_x = text_w + 80
+    step_y = text_h + 60
+    
+    # Desenha repetidamente em grelha expandida
+    for y in range(0, altura * 2, step_y):
+        for x in range(0, largura * 2, step_x):
+            draw_overlay.text((x, y), texto, fill=(180, 0, 0, opacidade), font=fonte)
+            
+    # Rotaciona a camada com o texto repetido
+    overlay_rotacionado = overlay.rotate(30, expand=True)
+    
+    # Recorta para caber exatamente no tamanho da arte final
+    crop_x = (overlay_rotacionado.width - largura) // 2
+    crop_y = (overlay_rotacionado.height - altura) // 2
+    overlay_final = overlay_rotacionado.crop((crop_x, crop_y, crop_x + largura, crop_y + altura))
+    
+    # Aplica sobre a imagem original
+    return Image.alpha_composite(imagem_base.convert("RGBA"), overlay_final)
+
+# ==========================================
 # CÓDIGO PRINCIPAL
 # ==========================================
 st.title("🥩 Gerador de Catálogo Promocional")
@@ -148,14 +183,17 @@ if st.sidebar.button("🚪 Sair do Sistema"):
     st.rerun()
 
 OPCOES_CORES = {
+    "Azul": "#0038A8",
     "Vermelho Oferta": "#D32F2F",
     "Amarelo Encarte": "#FBC02D",
     "Escuro Churrasco": "#1E1E1E",
     "Verde": "#2E7D32",
-    "Azul": "#1976D2",
     "Laranja": "#E65100",
+    "Cinza Escuro": "#444444",
     "Cinza Claro": "#F0F2F5",
     "Branco": "#FFFFFF",
+    "Transparente / Nenhum": "TRANSPARENTE",
+    "🎨 Usar Hexadecimal Personalizado": "CUSTOM"
 }
 
 # ==========================================
@@ -257,6 +295,27 @@ def criar_banner_com_blur(img_banner, larg_alvo, alt_alvo):
     return bg_blur
 
 
+def quebrar_texto_por_largura(draw, texto, fonte, largura_maxima):
+    palavras = texto.split()
+    if not palavras:
+        return []
+
+    linhas = []
+    linha_atual = palavras[0]
+
+    for palavra in palavras[1:]:
+        test_line = linha_atual + " " + palavra
+        bbox = draw.textbbox((0, 0), test_line, font=fonte)
+        largura_teste = bbox[2] - bbox[0]
+        if largura_teste <= largura_maxima:
+            linha_atual = test_line
+        else:
+            linhas.append(linha_atual)
+            linha_atual = palavra
+    linhas.append(linha_atual)
+    return linhas
+
+
 def desenhar_selo_no_card(
     draw,
     texto_desconto,
@@ -327,68 +386,76 @@ def desenhar_texto_alinhado(
     draw.text((x, y), texto, fill=cor, font=fonte)
     return y + (bbox[3] - bbox[1]) + 8
 
+def tratar_e_desenhar_preco(
+    draw, texto_preco, x_min, x_max, center_y, cor_preco, tamanho_base, estilo_fonte
+):
+    if not texto_preco or not texto_preco.strip():
+        return
 
-def ajustar_e_quebrar_texto(texto, fonte, max_largura, draw):
-    palavras = texto.split()
-    linhas = []
-    linha_atual = ""
+    val_limpo = texto_preco.strip().replace("R$", "").replace(" ", "").replace(".", ",")
+    if "," in val_limpo:
+        partes = val_limpo.split(",")
+        inteiro = partes[0]
+        centavos = partes[1][:2].ljust(2, "0")
+    else:
+        inteiro = val_limpo
+        centavos = "00"
 
-    for palavra in palavras:
-        test_line = f"{linha_atual} {palavra}".strip()
-        bbox = draw.textbbox((0, 0), test_line, font=fonte)
-        w = bbox[2] - bbox[0]
+    txt_rs = "R$"
+    txt_int = f" {inteiro},"
+    txt_cent = centavos
 
-        if w <= max_largura:
-            linha_atual = test_line
-        else:
-            if linha_atual:
-                linhas.append(linha_atual)
-            linha_atual = palavra
+    tam_rs = int(tamanho_base * 0.50)
+    tam_int = int(tamanho_base)
+    tam_cent = int(tamanho_base * 0.50)
 
-    if linha_atual:
-        linhas.append(linha_atual)
+    fonte_rs = carregar_fonte(estilo_fonte, tam_rs)
+    fonte_int = carregar_fonte(estilo_fonte, tam_int)
+    fonte_cent = carregar_fonte(estilo_fonte, tam_cent)
 
-    return linhas
+    bbox_rs = draw.textbbox((0, 0), txt_rs, font=fonte_rs)
+    bbox_int = draw.textbbox((0, 0), txt_int, font=fonte_int)
+    bbox_cent = draw.textbbox((0, 0), txt_cent, font=fonte_cent)
 
+    w_rs = bbox_rs[2] - bbox_rs[0]
+    w_int = bbox_int[2] - bbox_int[0]
+    w_cent = bbox_cent[2] - bbox_cent[0]
 
-def aplicar_marca_dagua(imagem_base, largura, altura, texto="PREÇO EXCLUSIVO COLABORADOR"):
-    """Aplica marca d'água repetida na diagonal com ~15% de opacidade
-    e espaçamento corrigido para não truncar o texto.
-    """
-    overlay = Image.new("RGBA", (largura * 2, altura * 2), (255, 255, 255, 0))
-    draw_overlay = ImageDraw.Draw(overlay)
+    w_total = w_rs + w_int + w_cent
+    largura_disponivel = x_max - x_min
 
-    fonte_watermark = carregar_fonte("Padrão Negrito (Liberation / Arial)", 22)
+    if w_total > largura_disponivel and tamanho_base > 10:
+        fator_reducao = largura_disponivel / w_total
+        novo_tam = max(8, int(tamanho_base * fator_reducao))
+        return tratar_e_desenhar_preco(
+            draw,
+            texto_preco,
+            x_min,
+            x_max,
+            center_y,
+            cor_preco,
+            novo_tam,
+            estilo_fonte,
+        )
 
-    # Alpha 38 = ~15% de opacidade (mais suave)
-    cor_texto_transparente = (80, 80, 80, 38)
+    start_x = x_min + max(0, (largura_disponivel - w_total) // 2)
 
-    passo_x = 600
-    passo_y = 85
+    h_int = bbox_int[3] - bbox_int[1]
+    base_y = center_y + (h_int // 2)
 
-    linha_idx = 0
-    for y in range(-altura, altura * 2, passo_y):
-        offset_x = (linha_idx % 2) * (passo_x // 2)
-        for x in range(-largura - offset_x, largura * 2, passo_x):
-            draw_overlay.text(
-                (x + offset_x, y),
-                texto,
-                fill=cor_texto_transparente,
-                font=fonte_watermark,
-            )
-        linha_idx += 1
+    # R$
+    y_rs = base_y - (bbox_rs[3] - bbox_rs[1]) - 2
+    draw.text((start_x, y_rs), txt_rs, fill=cor_preco, font=fonte_rs)
 
-    overlay_rotacionado = overlay.rotate(
-        -30, resample=Image.Resampling.BICUBIC, expand=False
-    )
+    # Inteiro + Vírgula
+    x_int = start_x + w_rs
+    y_int = base_y - h_int
+    draw.text((x_int, y_int), txt_int, fill=cor_preco, font=fonte_int)
 
-    crop_x = (overlay_rotacionado.width - largura) // 2
-    crop_y = (overlay_rotacionado.height - altura) // 2
-    overlay_cortado = overlay_rotacionado.crop(
-        (crop_x, crop_y, crop_x + largura, crop_y + altura)
-    )
-
-    return Image.alpha_composite(imagem_base.convert("RGBA"), overlay_cortado)
+    # Centavos
+    x_cent = x_int + w_int
+    y_cent = y_int + 2
+    draw.text((x_cent, y_cent), txt_cent, fill=cor_preco, font=fonte_cent)
 
 # ==========================================
 # PAINEL LATERAL
@@ -414,6 +481,17 @@ opcao_formato = st.sidebar.selectbox(
     ["Quadrado / Feed / A4 (1200x1200px)", "Stories / Celular (1080x1920px)"],
     index=0,
 )
+
+st.sidebar.markdown("---")
+st.sidebar.header("🛡️ Proteção & Marca D'água")
+
+ativar_marca_dagua = st.sidebar.checkbox("Ativar Marca D'água Anti-Vazamento", value=True)
+if ativar_marca_dagua:
+    texto_marca_dagua = st.sidebar.text_input("Texto da Marca D'água", "PREÇO EXCLUSIVO COLABORADOR")
+    opacidade_marca = st.sidebar.slider("Opacidade da Marca D'água", 10, 100, 35)
+else:
+    texto_marca_dagua = ""
+    opacidade_marca = 35
 
 st.sidebar.markdown("---")
 st.sidebar.header("🖼️ 1. Cabeçalho (Topo do Catálogo)")
@@ -481,7 +559,7 @@ if banner_imagem_ativa is None:
 
     frase_1 = st.sidebar.text_input("Frase Principal", "OFERTAS DA SEMANA")
     fonte_1 = st.sidebar.selectbox(
-        "Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=0
+        "Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=1
     )
     col_a, col_b, col_c = st.sidebar.columns(3)
     with col_a:
@@ -500,7 +578,7 @@ if banner_imagem_ativa is None:
         "Slogan / Subtítulo", "Preços Imbatíveis e Qualidade Garantida!"
     )
     fonte_2 = st.sidebar.selectbox(
-        "Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=1
+        "Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=2
     )
     col_d, col_e, col_f = st.sidebar.columns(3)
     with col_d:
@@ -509,7 +587,7 @@ if banner_imagem_ativa is None:
         )
     with col_e:
         cor_2 = OPCOES_CORES[
-            st.selectbox("Cor #2", list(OPCOES_CORES.keys()), index=2)
+            st.selectbox("Cor #2", list(OPCOES_CORES.keys()), index=3)
         ]
     with col_f:
         tam_2 = st.slider("Tam #2", 12, 40, 20)
@@ -534,8 +612,6 @@ bg_custom_file = None
 cor_padrao_adm = "#F0F2F5"
 if nome_banner_atual and nome_banner_atual in dict_cores_banners:
     cor_padrao_adm = dict_cores_banners[nome_banner_atual]
-
-cor_fundo_catalogo = cor_padrao_adm
 
 if tipo_fundo == "Cor Sólida / Hexadecimal":
     cor_fundo_catalogo = st.sidebar.color_picker(
@@ -599,7 +675,7 @@ frase_rodape = st.sidebar.text_input(
     "Frase Rodapé", "Ofertas válidas enquanto durarem os estoques."
 )
 fonte_r = st.sidebar.selectbox(
-    "Estilo Fonte Rodapé", list(OPCOES_FONTES.keys()), index=0
+    "Estilo Fonte Rodapé", list(OPCOES_FONTES.keys()), index=1
 )
 col_g, col_h, col_i = st.sidebar.columns(3)
 with col_g:
@@ -608,13 +684,36 @@ with col_g:
     )
 with col_h:
     cor_r = OPCOES_CORES[
-        st.selectbox("Cor Rodapé", list(OPCOES_CORES.keys()), index=2)
+        st.selectbox("Cor Rodapé", list(OPCOES_CORES.keys()), index=3)
     ]
 with col_i:
     tam_r = st.slider("Tam Rodapé", 12, 30, 16)
 
 st.sidebar.markdown("---")
-st.sidebar.header("🛒 4. Cadastro de Produtos e Fontes")
+st.sidebar.header("🏷️ Configurações Globais do Preço")
+
+sel_cor_preco = st.sidebar.selectbox(
+    "Cor do Preço", list(OPCOES_CORES.keys()), index=0
+)
+if OPCOES_CORES[sel_cor_preco] == "CUSTOM":
+    cor_preco_final = st.sidebar.text_input("Hexadecimal da Cor do Preço (#HEX)", "#0038A8")
+else:
+    cor_preco_final = OPCOES_CORES[sel_cor_preco]
+
+tamanho_preco_opcao = st.sidebar.select_slider(
+    "Tamanho do Preço",
+    options=["Pequeno", "Médio", "Grande"],
+    value="Grande",
+)
+
+fonte_preco = st.sidebar.selectbox(
+    "Estilo de Fonte do Preço",
+    list(OPCOES_FONTES.keys()),
+    index=0,
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("🛒 4. Cadastro de Produtos")
 
 tam_descricao_custom = st.sidebar.slider(
     "🔤 Tamanho da Descrição do Produto",
@@ -624,36 +723,31 @@ tam_descricao_custom = st.sidebar.slider(
     step=1,
 )
 
-formato_caixa_texto = st.sidebar.radio(
-    "Formatação do Texto da Descrição",
-    ["CAIXA ALTA (MAIÚSCULAS)", "Texto Normal"],
-    index=0,
+st.sidebar.subheader("🎨 Personalização da Descrição do Produto")
+
+formatar_caixa_alta = st.sidebar.checkbox("Usar Caixa Alta (MAIÚSCULAS)", value=True)
+
+sel_cor_texto_desc = st.sidebar.selectbox(
+    "Cor do Texto da Descrição", list(OPCOES_CORES.keys()), index=8
 )
-
-cor_texto_desc = st.sidebar.color_picker(
-    "🎨 Cor do Texto da Descrição (#HEX)",
-    value="#444444",
-)
-
-st.sidebar.markdown("**🎨 Destaque do Nome do Produto (Box de Fundo)**")
-usar_box_desc = st.sidebar.checkbox("Ativar Box Colorido na Descrição", value=False)
-
-if usar_box_desc:
-    cor_box_desc = st.sidebar.color_picker(
-        "Cor do Box de Fundo (#HEX)",
-        value="#D32F2F",
-    )
-    col_pad1, col_pad2 = st.sidebar.columns(2)
-    with col_pad1:
-        pad_h_box = st.number_input("Padding Horizontal (Esq/Dir)", min_value=0, max_value=20, value=6)
-    with col_pad2:
-        pad_v_box = st.number_input("Padding Vertical (Topo/Base)", min_value=0, max_value=20, value=4)
+if OPCOES_CORES[sel_cor_texto_desc] == "CUSTOM":
+    cor_texto_desc = st.sidebar.text_input("Hexadecimal da Cor do Texto (#HEX)", "#FFFFFF")
 else:
-    cor_box_desc = None
-    pad_h_box = 0
-    pad_v_box = 0
+    cor_texto_desc = OPCOES_CORES[sel_cor_texto_desc]
 
-st.sidebar.markdown("---")
+sel_cor_box_desc = st.sidebar.selectbox(
+    "Cor do Box da Descrição (Fundo)", list(OPCOES_CORES.keys()), index=0
+)
+if OPCOES_CORES[sel_cor_box_desc] == "CUSTOM":
+    cor_box_desc = st.sidebar.text_input("Hexadecimal do Box (#HEX)", "#0038A8")
+else:
+    cor_box_desc = OPCOES_CORES[sel_cor_box_desc]
+
+col_pad1, col_pad2 = st.sidebar.columns(2)
+with col_pad1:
+    padding_h_desc = st.number_input("Padding Esq/Direita (px)", min_value=3, max_value=30, value=6)
+with col_pad2:
+    padding_v_desc = st.number_input("Padding Top/Base (px)", min_value=0, max_value=20, value=4)
 
 zoom_porcentagem = st.sidebar.slider(
     "🔍 Zoom da Imagem do Produto",
@@ -666,7 +760,7 @@ fator_zoom = zoom_porcentagem / 100.0
 
 OPCOES_QUANTIDADE = [1, 2, 3, 6, 9, 12, 16]
 num_produtos = st.sidebar.selectbox(
-    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=3
+    "Quantidade de Produtos", OPCOES_QUANTIDADE, index=2
 )
 
 produtos_inputs = []
@@ -678,27 +772,25 @@ for i in range(num_produtos):
     with col2:
         desc = st.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
 
-    val = st.sidebar.text_input(f"Validade Ex: val: 08/08/2026", key=f"val_{i}")
+    col3, col4 = st.sidebar.columns([2, 2])
+    with col3:
+        preco_val = st.text_input(f"Preço (ex: 57,90)", key=f"preco_{i}")
+    with col4:
+        val = st.text_input(f"Validade", key=f"val_{i}")
 
     if cod.strip():
         produtos_inputs.append({
             "codigo": cod.strip(),
             "desconto": desc.strip(),
             "validade": val.strip(),
+            "preco": preco_val.strip(),
             "cod_parana": "",
         })
 
-# --- MODO PARANÁ E MARCA D'ÁGUA ---
 st.sidebar.markdown("---")
 modo_parana = st.sidebar.checkbox(
     "🌲 Modo Paraná (Substituir Códigos)",
     value=False,
-)
-
-ativar_marca_dagua = st.sidebar.checkbox(
-    "🔒 Ativar Marca d'Água (Uso Interno)",
-    value=False,
-    help="Adiciona 'PREÇO EXCLUSIVO COLABORADOR' repetido com transparência por cima da arte.",
 )
 
 if modo_parana and produtos_inputs:
@@ -731,6 +823,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 dados["imagem"] = img
                 dados["desconto"] = item["desconto"]
                 dados["validade"] = item["validade"]
+                dados["preco"] = item["preco"]
 
                 if modo_parana and item["cod_parana"]:
                     dados["codigo"] = item["cod_parana"]
@@ -785,7 +878,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             # --- 1. CABEÇALHO ---
             if banner_imagem_ativa:
                 alt_banner_alvo = ALTURA_CABECALHO - 15
-                
+
                 if "Stories" in opcao_formato:
                     banner_final = criar_banner_com_blur(
                         banner_imagem_ativa, LARGURA_MAX, alt_banner_alvo
@@ -795,7 +888,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                         (LARGURA_MAX, alt_banner_alvo),
                         Image.Resampling.LANCZOS,
                     )
-                
+
                 catalogo.paste(banner_final, (0, 0), banner_final)
             else:
                 x_inicio_texto = 40
@@ -844,7 +937,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             # --- 2. CARDS E PRODUTOS ---
             tamanho_fonte_tit = tam_descricao_custom
             tamanho_fonte_cod = max(10, int(tam_descricao_custom * 0.85))
-            tamanho_fonte_selo = int(13 * 1.30)
 
             fonte_prod_titulo = carregar_fonte(
                 "Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit
@@ -854,8 +946,6 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
             )
 
             padding_card = 8 if cols == 4 else 12
-            card_w = largura_slot - (padding_card * 2)
-            card_h = altura_slot - (padding_card * 2)
 
             for idx, prod in enumerate(produtos_carregados):
                 c = idx % cols
@@ -864,48 +954,45 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                 slot_x = c * largura_slot
                 slot_y = ALTURA_CABECALHO + (l * altura_slot)
 
+                card_w = largura_slot - (padding_card * 2)
+                altura_max_ideal = int(card_w * 1.45)
+                card_h = min(altura_slot - (padding_card * 2), altura_max_ideal)
+
+                offset_y_centro = (altura_slot - card_h) // 2
+
                 card_x1 = slot_x + padding_card
-                card_y1 = slot_y + padding_card
+                card_y1 = slot_y + offset_y_centro
                 card_x2 = card_x1 + card_w
                 card_y2 = card_y1 + card_h
+                card_radius = 12 if cols == 4 else 14
 
                 draw.rounded_rectangle(
                     [card_x1, card_y1, card_x2, card_y2],
-                    radius=12 if cols == 4 else 14,
+                    radius=card_radius,
                     fill="white",
                     outline="#E0E0E0",
                     width=1,
                 )
 
-                # Formatação da descrição
-                titulo_formatado = prod["titulo"]
-                if formato_caixa_texto == "CAIXA ALTA (MAIÚSCULAS)":
-                    titulo_formatado = titulo_formatado.upper()
+                texto_titulo = prod["titulo"].upper() if formatar_caixa_alta else prod["titulo"]
 
-                padding_lateral_texto = 4
-                largura_util_texto = card_w - (padding_lateral_texto * 2)
-
-                titulos_wrapped = ajustar_e_quebrar_texto(
-                    titulo_formatado, fonte_prod_titulo, largura_util_texto, draw
+                largura_util_texto = card_w - (padding_h_desc * 2)
+                titulos_wrapped = quebrar_texto_por_largura(
+                    draw, texto_titulo, fonte_prod_titulo, largura_util_texto
                 )[:2]
 
-                espacamento_linha = int(tamanho_fonte_tit * 1.25)
+                espacamento_linha = int(tamanho_fonte_tit * 1.2)
                 altura_titulos = len(titulos_wrapped) * espacamento_linha
-                if usar_box_desc:
-                    altura_titulos += (pad_v_box * 2)
 
-                y_texto_base = (
-                    card_y2 - 10 - altura_titulos - tamanho_fonte_cod
-                )
-                y_cod = y_texto_base
+                margin_bottom_cod = 6
+                box_top_y = card_y2 - 10 - altura_titulos - (padding_v_desc * 2)
+                y_cod = box_top_y - tamanho_fonte_cod - margin_bottom_cod
 
                 texto_cod = f"COD: {prod['codigo']}"
                 if prod["validade"]:
                     texto_cod += f" - {prod['validade']}"
 
-                bbox_cod = draw.textbbox(
-                    (0, 0), texto_cod, font=fonte_prod_codigo
-                )
+                bbox_cod = draw.textbbox((0, 0), texto_cod, font=fonte_prod_codigo)
                 w_cod = bbox_cod[2] - bbox_cod[0]
                 x_cod = card_x1 + (card_w - w_cod) // 2
                 draw.text(
@@ -915,100 +1002,99 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     font=fonte_prod_codigo,
                 )
 
-                y_t = y_cod + (bbox_cod[3] - bbox_cod[1]) + 4
+                y_t = box_top_y + padding_v_desc
+
+                if cor_box_desc != "TRANSPARENTE":
+                    box_desc_x1 = card_x1 + padding_h_desc
+                    box_desc_x2 = card_x2 - padding_h_desc
+                    box_desc_y1 = box_top_y
+                    box_desc_y2 = box_top_y + altura_titulos + (padding_v_desc * 2)
+
+                    draw.rounded_rectangle(
+                        [box_desc_x1, box_desc_y1, box_desc_x2, box_desc_y2],
+                        radius=max(4, card_radius // 2),
+                        fill=cor_box_desc
+                    )
 
                 for t_linha in titulos_wrapped:
-                    bbox_tit = draw.textbbox(
-                        (0, 0), t_linha, font=fonte_prod_titulo
-                    )
+                    bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
                     w_tit = bbox_tit[2] - bbox_tit[0]
-                    h_tit = bbox_tit[3] - bbox_tit[1]
                     x_tit = card_x1 + (card_w - w_tit) // 2
-
-                    if usar_box_desc and cor_box_desc:
-                        box_x1 = max(card_x1 + 2, x_tit - pad_h_box)
-                        box_y1 = y_t - pad_v_box
-                        box_x2 = min(card_x2 - 2, x_tit + w_tit + pad_h_box)
-                        box_y2 = y_t + h_tit + pad_v_box
-
-                        draw.rectangle(
-                            [box_x1, box_y1, box_x2, box_y2],
-                            fill=cor_box_desc,
-                        )
-
                     draw.text(
                         (x_tit, y_t),
                         t_linha,
                         fill=cor_texto_desc,
                         font=fonte_prod_titulo,
                     )
-                    y_t += espacamento_linha + (pad_v_box if usar_box_desc else 0)
+                    y_t += espacamento_linha
 
-                area_foto_top = card_y1 + 8
-                area_foto_bottom = y_cod - 6
-                max_foto_h = area_foto_bottom - area_foto_top
-                max_foto_w = card_w - 16
+                # Renderização da Imagem do Produto
+                img_prod = prod["imagem"]
+                max_w_img = card_w - 20
+                max_h_img = y_cod - card_y1 - 30
 
-                img_p = redimensionar_proporcional(
-                    prod["imagem"],
-                    max_foto_w,
-                    max_foto_h,
-                    fator_zoom=fator_zoom,
-                )
+                if max_h_img > 30 and max_w_img > 30:
+                    img_fit = redimensionar_proporcional(
+                        img_prod, max_w_img, max_h_img, fator_zoom
+                    )
+                    x_img = card_x1 + (card_w - img_fit.width) // 2
+                    y_img = card_y1 + 10 + (max_h_img - img_fit.height) // 2
+                    catalogo.paste(img_fit, (x_img, y_img), img_fit)
 
-                pos_x = card_x1 + (card_w - img_p.width) // 2
-                pos_y = area_foto_top + (max_foto_h - img_p.height) // 2
+                # Preço do Produto
+                if prod.get("preco"):
+                    tam_base = 40 if tamanho_preco_opcao == "Grande" else (32 if tamanho_preco_opcao == "Médio" else 24)
+                    tratar_e_desenhar_preco(
+                        draw,
+                        prod["preco"],
+                        card_x1 + 10,
+                        card_x2 - 10,
+                        card_y1 + (max_h_img // 2),
+                        cor_preco_final,
+                        tam_base,
+                        fonte_preco,
+                    )
 
-                catalogo.paste(img_p, (pos_x, pos_y), img_p)
-
-                if prod["desconto"]:
+                # Selo de Desconto / Oferta
+                if prod.get("desconto"):
                     desenhar_selo_no_card(
                         draw,
                         prod["desconto"],
                         card_x2,
                         card_y1,
-                        tam_fonte=tamanho_fonte_selo,
                     )
 
             # --- 3. RODAPÉ ---
-            y_rodape = ALTURA_MAX - ALTURA_RODAPE + 10
-            draw.line(
-                [(30, y_rodape - 5), (LARGURA_MAX - 30, y_rodape - 5)],
-                fill="#CCCCCC",
-                width=2,
-            )
-
+            y_rodape = ALTURA_MAX - ALTURA_RODAPE + 15
             desenhar_texto_alinhado(
                 draw,
                 frase_rodape,
-                y_rodape + 10,
+                y_rodape,
                 cor_r,
                 tam_r,
                 alinh_r,
                 estilo_fonte=fonte_r,
-                x_inicio=30,
-                x_fim=LARGURA_MAX - 30,
+                x_inicio=40,
+                x_fim=LARGURA_MAX - 40,
             )
 
-            # --- 4. MARCA D'ÁGUA (SE ATIVADA) ---
-            if ativar_marca_dagua:
-                catalogo = aplicar_marca_dagua(catalogo, LARGURA_MAX, ALTURA_MAX)
+            # --- 4. APLICAÇÃO DA MARCA D'ÁGUA ANTI-VAZAMENTO ---
+            if ativar_marca_dagua and texto_marca_dagua:
+                catalogo = aplicar_marca_dagua(
+                    catalogo, 
+                    texto=texto_marca_dagua, 
+                    opacidade=opacidade_marca
+                )
 
-            # --- EXIBIÇÃO FINAL ---
-            catalogo_rgb = catalogo.convert("RGB")
-            st.image(
-                catalogo_rgb,
-                caption=f"Resultado Final do Catálogo ({LARGURA_MAX}x{ALTURA_MAX}px HD)",
-                use_container_width=True,
-            )
-
+            # --- EXIBIÇÃO E DOWNLOAD ---
             buf = io.BytesIO()
-            catalogo_rgb.save(buf, format="PNG", compress_level=1)
+            catalogo.convert("RGB").save(buf, format="PNG")
             byte_im = buf.getvalue()
 
+            st.image(byte_im, caption="🎨 Arte Gerada com Sucesso!", use_container_width=True)
             st.download_button(
-                label="💾 Baixar Imagem Gerada em Alta Qualidade (PNG)",
+                label="📥 Baixar Catálogo em Alta Resolução",
                 data=byte_im,
-                file_name=f"catalogo_promocional_{LARGURA_MAX}x{ALTURA_MAX}.png",
+                file_name="catalogo_promocional.png",
                 mime="image/png",
             )
