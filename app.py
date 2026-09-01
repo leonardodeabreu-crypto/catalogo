@@ -353,6 +353,7 @@ def desenhar_texto_alinhado(
     draw.text((x, y), texto, fill=cor, font=fonte)
     return y + (bbox[3] - bbox[1]) + 8
 
+
 def tratar_e_desenhar_preco(
     draw, texto_preco, x_min, x_max, center_y, cor_preco, tamanho_base, estilo_fonte
 ):
@@ -760,7 +761,7 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
 
             draw.line([(30, ALTURA_CABECALHO - 15), (LARGURA_MAX - 30, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
 
-            # --- 2. CARDS E PRODUTOS (LAYOUT LADO A LADO) ---
+            # --- 2. CARDS E PRODUTOS ---
             tamanho_fonte_tit = tam_descricao_custom
             tamanho_fonte_cod = max(10, int(tam_descricao_custom * 0.85))
 
@@ -837,62 +838,103 @@ if st.button("🚀 Gerar Catálogo Final", type="primary"):
                     draw.text((x_tit, y_t), t_linha, fill=cor_texto_desc, font=fonte_prod_titulo)
                     y_t += espacamento_linha
 
-                # --- COLUNAS INTERNAS (FOTO NA ESQUERDA, PREÇO NA DIREITA) ---
-                metade_card_w = card_w // 2
-                
-                col_img_x1 = card_x1 + 8
-                col_img_x2 = card_x1 + metade_card_w - 4
-                max_w_img = col_img_x2 - col_img_x1
-                
-                col_preco_x1 = card_x1 + metade_card_w + 4
-                col_preco_x2 = card_x2 - 8
+                # --- DESENHO DO SELO DE DESCONTO ---
+                if prod.get("desconto"):
+                    desenhar_selo_no_card(
+                        draw,
+                        prod["desconto"],
+                        card_x2,
+                        card_y1,
+                        cor_fundo="#E53935",
+                        cor_texto="white",
+                        tam_fonte=13,
+                    )
 
-                img_prod = prod["imagem"]
+                # --- COLUNAS INTERNAS (FOTO E PREÇO DYNAMIC ALIGN) ---
+                tem_preco = bool(prod.get("preco") and prod["preco"].strip())
                 max_h_img = y_cod - card_y1 - 20
 
-                if max_h_img > 30 and max_w_img > 30:
-                    img_fit = redimensionar_proporcional(img_prod, max_w_img, max_h_img, fator_zoom)
-                    x_img = col_img_x1 + (max_w_img - img_fit.width) // 2
-                    y_img = card_y1 + 10 + (max_h_img - img_fit.height) // 2
-                    catalogo.paste(img_fit, (x_img, y_img), img_fit)
+                if tem_preco:
+                    # Layout Com Preço: Foto à esquerda (metade), Preço à direita
+                    metade_card_w = card_w // 2
 
-                if prod.get("preco"):
-                    tam_base = 85 if tamanho_preco_opcao == "Grande" else (65 if tamanho_preco_opcao == "Médio" else 26)
-                    centro_y_preco = card_y1 + 10 + (max_h_img // 2)
-                    
+                    col_img_x1 = card_x1 + 8
+                    col_img_x2 = card_x1 + metade_card_w - 4
+                    max_w_img = col_img_x2 - col_img_x1
+
+                    col_preco_x1 = card_x1 + metade_card_w + 4
+                    col_preco_x2 = card_x2 - 8
+
+                    if max_h_img > 30 and max_w_img > 30:
+                        img_fit = redimensionar_proporcional(
+                            prod["imagem"], max_w_img, max_h_img, fator_zoom
+                        )
+                        x_img = col_img_x1 + (max_w_img - img_fit.width) // 2
+                        y_img = card_y1 + 10 + (max_h_img - img_fit.height) // 2
+                        catalogo.paste(img_fit, (x_img, y_img), img_fit)
+
+                    tam_base = (
+                        85
+                        if tamanho_preco_opcao == "Grande"
+                        else (65 if tamanho_preco_opcao == "Médio" else 45)
+                    )
+                    center_y_preco = card_y1 + 10 + (max_h_img // 2)
+
                     tratar_e_desenhar_preco(
                         draw,
                         prod["preco"],
                         col_preco_x1,
                         col_preco_x2,
-                        centro_y_preco,
+                        center_y_preco,
                         cor_preco_final,
                         tam_base,
                         fonte_preco,
                     )
+                else:
+                    # Layout Sem Preço: Foto centralizada no card
+                    max_w_img = card_w - 16
 
-                if prod.get("desconto"):
-                    desenhar_selo_no_card(draw, prod["desconto"], card_x2, card_y1)
+                    if max_h_img > 30 and max_w_img > 30:
+                        img_fit = redimensionar_proporcional(
+                            prod["imagem"], max_w_img, max_h_img, fator_zoom
+                        )
+                        x_img = card_x1 + (card_w - img_fit.width) // 2
+                        y_img = card_y1 + 10 + (max_h_img - img_fit.height) // 2
+                        catalogo.paste(img_fit, (x_img, y_img), img_fit)
 
             # --- 3. RODAPÉ ---
             y_rodape = ALTURA_MAX - ALTURA_RODAPE + 15
             desenhar_texto_alinhado(
-                draw, frase_rodape, y_rodape, cor_r, tam_r, alinh_r, estilo_fonte=fonte_r, x_inicio=40, x_fim=LARGURA_MAX - 40
+                draw,
+                frase_rodape,
+                y_rodape,
+                cor_r,
+                tam_r,
+                alinh_r,
+                estilo_fonte=fonte_r,
+                x_inicio=40,
+                x_fim=LARGURA_MAX - 40,
             )
 
             # --- 4. MARCA D'ÁGUA ---
-            if ativar_marca_dagua and texto_marca_dagua:
-                catalogo = aplicar_marca_dagua(catalogo, texto=texto_marca_dagua, opacidade=opacidade_marca)
+            if ativar_marca_dagua and texto_marca_dagua.strip():
+                catalogo = aplicar_marca_dagua(
+                    catalogo,
+                    texto=texto_marca_dagua.strip(),
+                    opacidade=int((opacidade_marca / 100.0) * 255),
+                )
 
             # --- EXIBIÇÃO E DOWNLOAD ---
-            buf = io.BytesIO()
-            catalogo.convert("RGB").save(buf, format="PNG")
-            byte_im = buf.getvalue()
+            st.image(catalogo, caption="🎨 Catálogo Gerado", use_container_width=True)
 
-            st.image(byte_im, caption="🎨 Arte Gerada com Sucesso!", use_container_width=True)
+            img_byte_arr = io.BytesIO()
+            catalogo.convert("RGB").save(img_byte_arr, format="JPEG", quality=95)
+            img_byte_arr = img_byte_arr.getvalue()
+
             st.download_button(
-                label="📥 Baixar Catálogo em Alta Resolução",
-                data=byte_im,
-                file_name="catalogo_promocional.png",
-                mime="image/png",
+                label="📥 Baixar Catálogo em Alta Resolução (JPG)",
+                data=img_byte_arr,
+                file_name="catalogo_promocional.jpg",
+                mime="image/jpeg",
+                type="primary",
             )
