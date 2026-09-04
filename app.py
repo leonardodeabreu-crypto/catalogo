@@ -1,725 +1,11 @@
-import io
-import json
-import os
-import re
-import time
-import urllib3
-from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
-import requests
-import streamlit as st
-
-# Desativa avisos de requisições HTTPS não verificadas (SSL)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# ==========================================
-# CONFIGURAÇÃO DA PÁGINA
-# ==========================================
-st.set_page_config(
-    page_title="Sistema de Artes & Catálogos",
-    page_icon="🥩",
-    layout="wide",
-)
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
-        " like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-}
-
-SENHA_USUARIO = "2244"
-SENHA_ADM = "9988"
-SENHA_ECOMMERCE = "5588"
-ARQUIVO_CORES_JSON = "cores_banners.json"
-
-# ==========================================
-# GERENCIAMENTO DE CORES DOS BANNERS (ADM)
-# ==========================================
-def carregar_cores_banners():
-    if os.path.exists(ARQUIVO_CORES_JSON):
-        try:
-            with open(ARQUIVO_CORES_JSON, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def salvar_cores_banners(dict_cores):
-    try:
-        with open(ARQUIVO_CORES_JSON, "w", encoding="utf-8") as f:
-            json.dump(dict_cores, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        st.error(f"Erro ao salvar cores do ADM: {e}")
-
-dict_cores_banners = carregar_cores_banners()
-
-# ==========================================
-# INICIALIZAÇÃO DA SESSÃO ISOLADA
-# ==========================================
-if "logo_bytes" not in st.session_state:
-    st.session_state["logo_bytes"] = None
-
-if "autenticado" not in st.session_state:
-    if st.query_params.get("auth") == "ok":
-        st.session_state["autenticado"] = True
-    else:
-        st.session_state["autenticado"] = False
-
-if "auth_ecom" not in st.session_state:
-    st.session_state["auth_ecom"] = False
-
-# ==========================================
-# TELA DE LOGIN PRINCIPAL
-# ==========================================
-if not st.session_state["autenticado"]:
-    st.title("🔒 Acesso Restrito")
-    st.write("Digite a senha de acesso para utilizar o sistema.")
-
-    senha_digitada = st.text_input(
-        "Senha de Acesso", type="password", max_chars=4
-    )
-
-    if st.button("Entrar"):
-        if senha_digitada == SENHA_USUARIO or senha_digitada == SENHA_ADM:
-            st.session_state["autenticado"] = True
-            st.query_params["auth"] = "ok"
-            st.success("Acesso liberado!")
-            st.rerun()
-        else:
-            st.error("Senha incorreta. Tente novamente.")
-
-    st.stop()
-
-# ==========================================
-# GERENCIAMENTO DE FONTES
-# ==========================================
-OPCOES_FONTES = {
-    "Impact (Encarte Forte)": [
-        "Impact.ttf",
-        "impact.ttf",
-        "LiberationSans-Bold.ttf",
-    ],
-    "Padrão Negrito (Liberation / Arial)": [
-        "LiberationSans-Bold.ttf",
-        "arialbd.ttf",
-        "DejaVuSans-Bold.ttf",
-    ],
-    "Moderna (Liberation Light / Arial)": [
-        "LiberationSans-Regular.ttf",
-        "arial.ttf",
-        "DejaVuSans.ttf",
-    ],
-    "Condensada / Estreita": [
-        "LiberationSansNarrow-Bold.ttf",
-        "DejaVuSansCondensed-Bold.ttf",
-    ],
-}
-
-def carregar_fonte(estilo_escolhido, tamanho):
-    lista_fontes = OPCOES_FONTES.get(
-        estilo_escolhido,
-        ["LiberationSans-Bold.ttf", "DejaVuSans-Bold.ttf", "arial.ttf"],
-    )
-
-    lista_fontes.extend([
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        "arial.ttf",
-    ])
-
-    for nome_fonte in lista_fontes:
-        try:
-            return ImageFont.truetype(nome_fonte, int(tamanho))
-        except (IOError, OSError):
-            continue
-
-    return ImageFont.load_default()
-
-# ==========================================
-# FUNÇÕES DE IMAGEM E SCRAPING
-# ==========================================
-def aplicar_marca_dagua(imagem_base, texto="PREÇO EXCLUSIVO COLABORADOR", opacidade=35, tamanho_fonte=28):
-    largura, altura = imagem_base.size
-    overlay = Image.new("RGBA", (largura * 2, altura * 2), (255, 255, 255, 0))
-    draw_overlay = ImageDraw.Draw(overlay)
-    fonte = carregar_fonte("Impact (Encarte Forte)", tamanho_fonte)
-    
-    bbox = draw_overlay.textbbox((0, 0), texto, font=fonte)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-    
-    step_x = text_w + 80
-    step_y = text_h + 60
-    
-    for y in range(0, altura * 2, step_y):
-        for x in range(0, largura * 2, step_x):
-            draw_overlay.text((x, y), texto, fill=(180, 0, 0, opacidade), font=fonte)
-            
-    overlay_rotacionado = overlay.rotate(30, expand=True)
-    crop_x = (overlay_rotacionado.width - largura) // 2
-    crop_y = (overlay_rotacionado.height - altura) // 2
-    overlay_final = overlay_rotacionado.crop((crop_x, crop_y, crop_x + largura, crop_y + altura))
-    
-    return Image.alpha_composite(imagem_base.convert("RGBA"), overlay_final)
-
-def buscar_dados_produto(codigo_busca):
-    url = f"https://www.fornecimentodireto.com.br/?busca={codigo_busca}"
-    dados = {
-        "codigo": codigo_busca,
-        "titulo": f"PRODUTO {codigo_busca}",
-        "img_url": None,
-    }
-
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=10, verify=False)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, "html.parser")
-
-            codigo_tag = soup.find("p", class_="card-text small")
-            if codigo_tag:
-                numeros = re.findall(r"\d+", codigo_tag.get_text(strip=True))
-                if numeros:
-                    dados["codigo"] = numeros[0]
-
-            titulo_tag = soup.find("h6", class_="card-title")
-            if titulo_tag:
-                dados["titulo"] = titulo_tag.get_text(strip=True)
-
-            cod_real = dados["codigo"]
-
-            img_tag = soup.find("img", class_="img-produto") or soup.find("img")
-            if img_tag:
-                url_encontrada = (
-                    img_tag.get("data-src")
-                    or img_tag.get("data-zoom-image")
-                    or img_tag.get("src")
-                )
-
-                if url_encontrada and not url_encontrada.endswith("load.gif"):
-                    url_limpa = re.sub(
-                        r"\?(width|height|w|h|dim)=\d+.*$", "", url_encontrada
-                    )
-                    url_limpa = re.sub(r"/(120|270)x(120|270)/", "/", url_limpa)
-
-                    if not url_limpa.startswith("http"):
-                        url_limpa = (
-                            "https://www.fornecimentodireto.com.br/"
-                            + url_limpa.lstrip("/")
-                        )
-
-                    dados["img_url"] = url_limpa
-
-            if not dados["img_url"]:
-                dados["img_url"] = (
-                    f"https://www.mercadoagora.com/arquivos/produtos/{cod_real}/1.jpg"
-                )
-
-            return dados
-    except Exception as e:
-        st.error(f"Erro ao buscar produto {codigo_busca}: {e}")
-
-    return dados
-
-def baixar_imagem(url):
-    if not url:
-        return None
-    try:
-        response = requests.get(url, headers=HEADERS, timeout=12, verify=False)
-        if response.status_code == 200:
-            img = Image.open(io.BytesIO(response.content))
-            return img.convert("RGBA")
-    except Exception:
-        pass
-    return None
-
-def redimensionar_proporcional(img, max_w, max_h, fator_zoom=1.0):
-    w_orig, h_orig = img.size
-    fator_base = min(max_w / w_orig, max_h / h_orig)
-    fator_final = fator_base * fator_zoom
-
-    novo_w = max(1, int(w_orig * fator_final))
-    novo_h = max(1, int(h_orig * fator_final))
-
-    return img.resize((novo_w, novo_h), Image.Resampling.LANCZOS)
-
-def encaixar_e_centralizar(img, box_w, box_h, bg_color=(255, 255, 255, 255)):
-    canvas = Image.new("RGBA", (box_w, box_h), bg_color)
-    img_fit = redimensionar_proporcional(img, box_w - 10, box_h - 10)
-    pos_x = (box_w - img_fit.width) // 2
-    pos_y = (box_h - img_fit.height) // 2
-    canvas.paste(img_fit, (pos_x, pos_y), img_fit)
-    return canvas
-
-def criar_banner_com_blur(img_banner, larg_alvo, alt_alvo):
-    bg_blur = img_banner.resize((larg_alvo, alt_alvo), Image.Resampling.LANCZOS)
-    bg_blur = bg_blur.filter(ImageFilter.GaussianBlur(radius=25))
-    img_fit = redimensionar_proporcional(img_banner, larg_alvo, alt_alvo)
-    x_pos = (larg_alvo - img_fit.width) // 2
-    y_pos = (alt_alvo - img_fit.height) // 2
-    bg_blur.paste(img_fit, (x_pos, y_pos), img_fit)
-    return bg_blur
-
-def quebrar_texto_por_largura(draw, texto, fonte, largura_maxima):
-    palavras = texto.split()
-    if not palavras:
-        return []
-    linhas = []
-    linha_atual = palavras[0]
-    for palavra in palavras[1:]:
-        test_line = linha_atual + " " + palavra
-        bbox = draw.textbbox((0, 0), test_line, font=fonte)
-        if (bbox[2] - bbox[0]) <= largura_maxima:
-            linha_atual = test_line
-        else:
-            linhas.append(linha_atual)
-            linha_atual = palavra
-    linhas.append(linha_atual)
-    return linhas
-
-def desenhar_selo_no_card(draw, texto_desconto, card_x2, card_y1, cor_fundo="#E53935", cor_texto="white", tam_fonte=13):
-    if not texto_desconto:
-        return
-    tam_fonte_ampliado = int(tam_fonte * 1.30)
-    fonte_selo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tam_fonte_ampliado)
-    bbox = draw.textbbox((0, 0), texto_desconto, font=fonte_selo)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
-
-    padding_h = max(10, int(tam_fonte_ampliado * 0.7))
-    padding_v = max(5, int(tam_fonte_ampliado * 0.4))
-    selo_w = text_w + (padding_h * 2)
-    selo_h = text_h + (padding_v * 2)
-
-    x1 = card_x2 - 12
-    x0 = x1 - selo_w
-    y0 = card_y1 + 12
-    y1 = y0 + selo_h
-
-    draw.rectangle([x0, y0, x1, y1], fill=cor_fundo)
-    draw.text((x0 + padding_h, y0 + padding_v - 1), texto_desconto, fill=cor_texto, font=fonte_selo)
-
-def desenhar_texto_alinhado(draw, texto, y, cor, tamanho, alinhamento, estilo_fonte="Padrão Negrito (Liberation / Arial)", x_inicio=270, x_fim=1170):
-    if not texto.strip():
-        return y
-    fonte = carregar_fonte(estilo_fonte, tamanho)
-    bbox = draw.textbbox((0, 0), texto, font=fonte)
-    largura_texto = bbox[2] - bbox[0]
-
-    if alinhamento == "Esquerda":
-        x = x_inicio
-    elif alinhamento == "Centro":
-        x = x_inicio + ((x_fim - x_inicio) - largura_texto) // 2
-    else:
-        x = x_fim - largura_texto
-
-    draw.text((x, y), texto, fill=cor, font=fonte)
-    return y + (bbox[3] - bbox[1]) + 8
-
-def tratar_e_desenhar_preco(draw, texto_preco, x_min, x_max, center_y, cor_preco, tamanho_base, estilo_fonte):
-    if not texto_preco or not texto_preco.strip():
-        return
-
-    val_limpo = texto_preco.strip().replace("R$", "").replace(" ", "").replace(".", ",")
-    if "," in val_limpo:
-        partes = val_limpo.split(",")
-        inteiro = partes[0]
-        centavos = partes[1][:2].ljust(2, "0")
-    else:
-        inteiro = val_limpo
-        centavos = "00"
-
-    txt_rs, txt_int, txt_cent = "R$", f" {inteiro},", centavos
-    tam_rs, tam_int, tam_cent = int(tamanho_base * 0.50), int(tamanho_base), int(tamanho_base * 0.50)
-
-    fonte_rs = carregar_fonte(estilo_fonte, tam_rs)
-    fonte_int = carregar_fonte(estilo_fonte, tam_int)
-    fonte_cent = carregar_fonte(estilo_fonte, tam_cent)
-
-    bbox_rs = draw.textbbox((0, 0), txt_rs, font=fonte_rs)
-    bbox_int = draw.textbbox((0, 0), txt_int, font=fonte_int)
-    bbox_cent = draw.textbbox((0, 0), txt_cent, font=fonte_cent)
-
-    w_rs, w_int, w_cent = bbox_rs[2] - bbox_rs[0], bbox_int[2] - bbox_int[0], bbox_cent[2] - bbox_cent[0]
-    w_total = w_rs + w_int + w_cent
-    largura_disponivel = x_max - x_min
-
-    if w_total > largura_disponivel and tamanho_base > 10:
-        fator_reducao = largura_disponivel / w_total
-        return tratar_e_desenhar_preco(
-            draw, texto_preco, x_min, x_max, center_y, cor_preco, max(8, int(tamanho_base * fator_reducao)), estilo_fonte
-        )
-
-    start_x = x_min + max(0, (largura_disponivel - w_total) // 2)
-    h_int = bbox_int[3] - bbox_int[1]
-    base_y = center_y + (h_int // 2)
-
-    draw.text((start_x, base_y - (bbox_rs[3] - bbox_rs[1]) - 2), txt_rs, fill=cor_preco, font=fonte_rs)
-    x_int = start_x + w_rs
-    draw.text((x_int, base_y - h_int), txt_int, fill=cor_preco, font=fonte_int)
-    draw.text((x_int + w_int, base_y - h_int + 2), txt_cent, fill=cor_preco, font=fonte_cent)
-
-# ==========================================
-# SELEÇÃO DE MÓDULO NA BARRA LATERAL
-# ==========================================
-st.sidebar.title("📌 Menu do Sistema")
-modulo_selecionado = st.sidebar.radio(
-    "Selecione o Módulo:",
-    ["🥩 Gerador de Catálogo", "🖼️ Conversão de Fotos E-commerce"],
-)
-
-st.sidebar.markdown("---")
-
-if st.sidebar.button("🚪 Sair do Sistema"):
-    st.session_state["autenticado"] = False
-    st.session_state["auth_ecom"] = False
-    if "auth" in st.query_params:
-        del st.query_params["auth"]
-    st.rerun()
-
-# ==============================================================================
-# MÓDULO 1: GERADOR DE CATÁLOGO PROMOCIONAL
-# ==============================================================================
-if modulo_selecionado == "🥩 Gerador de Catálogo":
-    st.title("🥩 Gerador de Catálogo Promocional")
-    st.write("Monte banners e catálogos profissionais com fotos limpas dos produtos!")
-
-    arquivos_banners = []
-    for f in os.listdir("."):
-        if f.lower().startswith("banner") and f.lower().endswith((".png", ".jpg", ".jpeg")):
-            arquivos_banners.append(f)
-
-    if os.path.exists("banners") and os.path.isdir("banners"):
-        for f in os.listdir("banners"):
-            if f.lower().endswith((".png", ".jpg", ".jpeg")):
-                arquivos_banners.append(os.path.join("banners", f))
-
-    arquivos_banners = sorted(list(set(arquivos_banners)))
-
-    st.sidebar.header("📐 Formato do Encarte")
-    opcao_formato = st.sidebar.selectbox(
-        "Escolha a Proporção da Arte",
-        ["Quadrado / Feed / A4 (1200x1200px)", "Stories / Celular (1080x1920px)"],
-        index=0,
-    )
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("🛡️ Proteção & Marca D'água")
-    ativar_marca_dagua = st.sidebar.checkbox("Ativar Marca D'água Anti-Vazamento", value=True)
-    texto_marca_dagua = st.sidebar.text_input("Texto da Marca D'água", "PREÇO EXCLUSIVO COLABORADOR") if ativar_marca_dagua else ""
-    opacidade_marca = st.sidebar.slider("Opacidade da Marca D'água", 10, 100, 35) if ativar_marca_dagua else 35
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("🖼️ 1. Cabeçalho (Topo do Catálogo)")
-    opcoes_cabecalho = ["Nenhum (Usar Logo e Frases)", "📤 Upload Manual de Banner"]
-    if arquivos_banners:
-        opcoes_cabecalho.extend([f"📁 {os.path.basename(b)}" for b in arquivos_banners])
-
-    opcao_banner_selecionada = st.sidebar.selectbox("Escolha o Modelo do Cabeçalho", opcoes_cabecalho, index=0)
-
-    banner_imagem_ativa = None
-    nome_banner_atual = None
-
-    if opcao_banner_selecionada == "📤 Upload Manual de Banner":
-        uploaded_banner = st.sidebar.file_uploader("Upload do Banner", type=["png", "jpg", "jpeg"])
-        if uploaded_banner:
-            banner_imagem_ativa = Image.open(uploaded_banner).convert("RGBA")
-            st.sidebar.image(banner_imagem_ativa, caption="🔍 Pré-visualização do Banner", use_container_width=True)
-
-    elif opcao_banner_selecionada.startswith("📁 "):
-        nome_banner_atual = opcao_banner_selecionada.replace("📁 ", "")
-        caminho_banner = next((b_path for b_path in arquivos_banners if os.path.basename(b_path) == nome_banner_atual), None)
-        if caminho_banner and os.path.exists(caminho_banner):
-            banner_imagem_ativa = Image.open(caminho_banner).convert("RGBA")
-            st.sidebar.image(banner_imagem_ativa, caption=f"Banner: {nome_banner_atual}", use_container_width=True)
-
-    OPCOES_CORES = {
-        "Azul": "#0038A8",
-        "Vermelho Oferta": "#D32F2F",
-        "Amarelo Encarte": "#FBC02D",
-        "Escuro Churrasco": "#1E1E1E",
-        "Verde": "#2E7D32",
-        "Laranja": "#E65100",
-        "Cinza Escuro": "#444444",
-        "Cinza Claro": "#F0F2F5",
-        "Branco": "#FFFFFF",
-        "Transparente / Nenhum": "TRANSPARENTE",
-        "🎨 Usar Hexadecimal Personalizado": "CUSTOM"
-    }
-
-    if banner_imagem_ativa is None:
-        st.sidebar.subheader("Logotipo")
-        logo_uploaded = st.sidebar.file_uploader("Enviar novo Logo", type=["png", "jpg", "jpeg"])
-        if logo_uploaded:
-            st.session_state["logo_bytes"] = logo_uploaded.getvalue()
-            st.sidebar.success("✅ Novo logo salvo!")
-
-        if st.session_state["logo_bytes"] is not None:
-            st.sidebar.image(st.session_state["logo_bytes"], width=100, caption="Logo Ativo")
-
-        st.sidebar.subheader("Textos do Topo")
-        frase_1 = st.sidebar.text_input("Frase Principal", "OFERTAS DA SEMANA")
-        fonte_1 = st.sidebar.selectbox("Estilo Fonte Título", list(OPCOES_FONTES.keys()), index=1)
-        col_a, col_b, col_c = st.sidebar.columns(3)
-        alinh_1 = col_a.selectbox("Alinhamento #1", ["Esquerda", "Centro", "Direita"], index=0)
-        cor_1 = OPCOES_CORES[col_b.selectbox("Cor #1", list(OPCOES_CORES.keys()), index=0)]
-        tam_1 = col_c.slider("Tam #1", 16, 60, 34)
-
-        frase_2 = st.sidebar.text_input("Slogan / Subtítulo", "Preços Imbatíveis e Qualidade Garantida!")
-        fonte_2 = st.sidebar.selectbox("Estilo Fonte Slogan", list(OPCOES_FONTES.keys()), index=2)
-        col_d, col_e, col_f = st.sidebar.columns(3)
-        alinh_2 = col_d.selectbox("Alinhamento #2", ["Esquerda", "Centro", "Direita"], index=0)
-        cor_2 = OPCOES_CORES[col_e.selectbox("Cor #2", list(OPCOES_CORES.keys()), index=3)]
-        tam_2 = col_f.slider("Tam #2", 12, 40, 20)
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("🎨 2. Fundo do Catálogo")
-    tipo_fundo = st.sidebar.radio("Escolha o Tipo de Fundo", ["Cor Sólida / Hexadecimal", "Imagem / Textura Personalizada"])
-    bg_custom_file = None
-    cor_padrao_adm = dict_cores_banners.get(nome_banner_atual, "#F0F2F5") if nome_banner_atual else "#F0F2F5"
-
-    if tipo_fundo == "Cor Sólida / Hexadecimal":
-        cor_fundo_catalogo = st.sidebar.color_picker("Escolha a Cor Hexadecimal (#HEX)", value=cor_padrao_adm)
-    else:
-        bg_custom_file = st.sidebar.file_uploader("Upload de Textura/Imagem de Fundo", type=["png", "jpg", "jpeg"])
-
-    with st.sidebar.expander("🔑 Área do Administrador (Cores de Banners)"):
-        if st.text_input("Senha Mestra ADM", type="password", key="input_senha_adm") == SENHA_ADM:
-            st.success("🔓 Acesso ADM Liberado!")
-            if arquivos_banners:
-                banner_para_config = st.selectbox("Banner para Fixar Cor", [os.path.basename(b) for b in arquivos_banners], key="select_banner_adm")
-                cor_atual_adm = dict_cores_banners.get(banner_para_config, "#F0F2F5")
-                nova_cor_hex = st.text_input("Cor Hexadecimal Fixa (#HEX)", value=cor_atual_adm, key="input_hex_adm")
-                if st.button("💾 Salvar Cor Fixa"):
-                    dict_cores_banners[banner_para_config] = nova_cor_hex.strip().upper()
-                    salvar_cores_banners(dict_cores_banners)
-                    st.success("Cor salva com sucesso!")
-                    st.rerun()
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("📝 3. Rodapé")
-    frase_rodape = st.sidebar.text_input("Frase Rodapé", "Ofertas válidas enquanto durarem os estoques.")
-    fonte_r = st.sidebar.selectbox("Estilo Fonte Rodapé", list(OPCOES_FONTES.keys()), index=1)
-    col_g, col_h, col_i = st.sidebar.columns(3)
-    alinh_r = col_g.selectbox("Alinhamento Rodapé", ["Esquerda", "Centro", "Direita"], index=1)
-    cor_r = OPCOES_CORES[col_h.selectbox("Cor Rodapé", list(OPCOES_CORES.keys()), index=3)]
-    tam_r = col_i.slider("Tam Rodapé", 12, 30, 16)
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("🏷️ Configurações Globais do Preço")
-    sel_cor_preco = st.sidebar.selectbox("Cor do Preço", list(OPCOES_CORES.keys()), index=0)
-    cor_preco_final = st.sidebar.text_input("Hexadecimal do Preço (#HEX)", "#0038A8") if OPCOES_CORES[sel_cor_preco] == "CUSTOM" else OPCOES_CORES[sel_cor_preco]
-    tamanho_preco_opcao = st.sidebar.select_slider("Tamanho do Preço", options=["Pequeno", "Médio", "Grande"], value="Grande")
-    fonte_preco = st.sidebar.selectbox("Estilo de Fonte do Preço", list(OPCOES_FONTES.keys()), index=0)
-
-    st.sidebar.markdown("---")
-    st.sidebar.header("🛒 4. Cadastro de Produtos")
-    tam_descricao_custom = st.sidebar.slider("🔤 Tamanho da Descrição", 10, 36, 14, 1)
-    formatar_caixa_alta = st.sidebar.checkbox("Usar Caixa Alta (MAIÚSCULAS)", value=True)
-
-    sel_cor_texto_desc = st.sidebar.selectbox("Cor do Texto da Descrição", list(OPCOES_CORES.keys()), index=8)
-    cor_texto_desc = st.sidebar.text_input("Hexadecimal Texto (#HEX)", "#FFFFFF") if OPCOES_CORES[sel_cor_texto_desc] == "CUSTOM" else OPCOES_CORES[sel_cor_texto_desc]
-
-    sel_cor_box_desc = st.sidebar.selectbox("Cor do Box da Descrição", list(OPCOES_CORES.keys()), index=0)
-    cor_box_desc = st.sidebar.text_input("Hexadecimal Box (#HEX)", "#0038A8") if OPCOES_CORES[sel_cor_box_desc] == "CUSTOM" else OPCOES_CORES[sel_cor_box_desc]
-
-    col_pad1, col_pad2 = st.sidebar.columns(2)
-    padding_h_desc = col_pad1.number_input("Padding Esq/Dir (px)", 3, 30, 6)
-    padding_v_desc = col_pad2.number_input("Padding Top/Base (px)", 0, 20, 4)
-
-    zoom_porcentagem = st.sidebar.slider("🔍 Zoom da Imagem", 100, 200, 100, 10)
-    fator_zoom = zoom_porcentagem / 100.0
-
-    num_produtos = st.sidebar.selectbox("Quantidade de Produtos", [1, 2, 3, 6, 9, 12, 16], index=3)
-
-    produtos_inputs = []
-    for i in range(num_produtos):
-        st.sidebar.markdown(f"**Produto #{i+1}**")
-        col1, col2 = st.sidebar.columns([2, 2])
-        cod = col1.text_input(f"COD. #{i+1}", key=f"cod_{i}")
-        desc = col2.text_input(f"Selo Ex: 10% OFF", key=f"desc_{i}")
-
-        col3, col4 = st.sidebar.columns([2, 2])
-        preco_val = col3.text_input(f"Preço (ex: 57,90)", key=f"preco_{i}")
-        val = col4.text_input(f"Validade", key=f"val_{i}")
-
-        if cod.strip():
-            produtos_inputs.append({
-                "codigo": cod.strip(),
-                "desconto": desc.strip(),
-                "validade": val.strip(),
-                "preco": preco_val.strip(),
-                "cod_parana": "",
-            })
-
-    st.sidebar.markdown("---")
-    modo_parana = st.sidebar.checkbox("🌲 Modo Paraná (Substituir Códigos)", value=False)
-    if modo_parana and produtos_inputs:
-        st.sidebar.subheader("🔑 Códigos do Paraná (PR)")
-        for idx, prod in enumerate(produtos_inputs):
-            cod_pr = st.sidebar.text_input(f"Código PR p/ Prod #{idx+1} (Busca: {prod['codigo']})", key=f"cod_pr_{idx}")
-            produtos_inputs[idx]["cod_parana"] = cod_pr.strip()
-
-    if st.button("🚀 Gerar Catálogo Final", type="primary"):
-        if not produtos_inputs:
-            st.warning("Por favor, insira pelo menos um código na barra lateral.")
-        else:
-            with st.spinner("Buscando imagens e montando o catálogo..."):
-                produtos_carregados = []
-                for item in produtos_inputs:
-                    dados = buscar_dados_produto(item["codigo"])
-                    img = baixar_imagem(dados["img_url"]) if dados else None
-                    if not img:
-                        img = Image.new("RGBA", (300, 300), color=(230, 230, 230, 255))
-
-                    dados["imagem"] = img
-                    dados["desconto"] = item["desconto"]
-                    dados["validade"] = item["validade"]
-                    dados["preco"] = item["preco"]
-                    if modo_parana and item["cod_parana"]:
-                        dados["codigo"] = item["cod_parana"]
-
-                    produtos_carregados.append(dados)
-                    time.sleep(0.1)
-
-                total = len(produtos_carregados)
-                if "Stories" in opcao_formato:
-                    LARGURA_MAX, ALTURA_MAX, ALTURA_CABECALHO, ALTURA_RODAPE = 1080, 1920, 280, 80
-                else:
-                    LARGURA_MAX, ALTURA_MAX, ALTURA_CABECALHO, ALTURA_RODAPE = 1200, 1200, 220, 60
-
-                if total == 1:
-                    cols, linhas = 1, 1
-                elif total == 2:
-                    cols, linhas = (1, 2) if "Stories" in opcao_formato else (2, 1)
-                elif total <= 3:
-                    cols, linhas = (1, 3) if "Stories" in opcao_formato else (3, 1)
-                elif total <= 6:
-                    cols, linhas = 2, 3
-                elif total <= 9:
-                    cols, linhas = 3, 3
-                elif total <= 12:
-                    cols, linhas = 3, 4
-                else:
-                    cols, linhas = 4, 4
-
-                altura_area_produtos = ALTURA_MAX - ALTURA_CABECALHO - ALTURA_RODAPE
-                largura_slot = LARGURA_MAX // cols
-                altura_slot = altura_area_produtos // linhas
-
-                if "Personalizada" in tipo_fundo and bg_custom_file:
-                    bg_img = Image.open(bg_custom_file).convert("RGBA")
-                    catalogo = bg_img.resize((LARGURA_MAX, ALTURA_MAX), Image.Resampling.LANCZOS)
-                else:
-                    catalogo = Image.new("RGBA", (LARGURA_MAX, ALTURA_MAX), color=cor_fundo_catalogo)
-
-                draw = ImageDraw.Draw(catalogo)
-
-                if banner_imagem_ativa:
-                    alt_banner_alvo = ALTURA_CABECALHO - 15
-                    banner_final = criar_banner_com_blur(banner_imagem_ativa, LARGURA_MAX, alt_banner_alvo) if "Stories" in opcao_formato else banner_imagem_ativa.resize((LARGURA_MAX, alt_banner_alvo), Image.Resampling.LANCZOS)
-                    catalogo.paste(banner_final, (0, 0), banner_final)
-                else:
-                    x_inicio_texto = 40
-                    if st.session_state["logo_bytes"] is not None:
-                        logo_img = Image.open(io.BytesIO(st.session_state["logo_bytes"])).convert("RGBA")
-                        logo_img.thumbnail((220, ALTURA_CABECALHO - 40))
-                        catalogo.paste(logo_img, (30, (ALTURA_CABECALHO - logo_img.height) // 2 - 10), logo_img)
-                        x_inicio_texto = 270
-
-                    y_texto = desenhar_texto_alinhado(draw, frase_1.upper(), 45, cor_1, tam_1, alinh_1, estilo_fonte=fonte_1, x_inicio=x_inicio_texto, x_fim=LARGURA_MAX - 30)
-                    desenhar_texto_alinhado(draw, frase_2, y_texto + 5, cor_2, tam_2, alinh_2, estilo_fonte=fonte_2, x_inicio=x_inicio_texto, x_fim=LARGURA_MAX - 30)
-
-                draw.line([(30, ALTURA_CABECALHO - 15), (LARGURA_MAX - 30, ALTURA_CABECALHO - 15)], fill="#CCCCCC", width=2)
-
-                tamanho_fonte_tit = tam_descricao_custom
-                tamanho_fonte_cod = max(10, int(tam_descricao_custom * 0.85))
-                fonte_prod_titulo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tamanho_fonte_tit)
-                fonte_prod_codigo = carregar_fonte("Padrão Negrito (Liberation / Arial)", tamanho_fonte_cod)
-
-                padding_card = 8 if cols == 4 else 12
-
-                for idx, prod in enumerate(produtos_carregados):
-                    c, l = idx % cols, idx // cols
-                    slot_x, slot_y = c * largura_slot, ALTURA_CABECALHO + (l * altura_slot)
-
-                    card_w = largura_slot - (padding_card * 2)
-                    card_h = min(altura_slot - (padding_card * 2), int(card_w * 1.45))
-                    offset_y_centro = (altura_slot - card_h) // 2
-
-                    card_x1, card_y1 = slot_x + padding_card, slot_y + offset_y_centro
-                    card_x2, card_y2 = card_x1 + card_w, card_y1 + card_h
-                    card_radius = 12 if cols == 4 else 14
-
-                    draw.rounded_rectangle([card_x1, card_y1, card_x2, card_y2], radius=card_radius, fill="white", outline="#E0E0E0", width=1)
-
-                    texto_titulo = prod["titulo"].upper() if formatar_caixa_alta else prod["titulo"]
-                    titulos_wrapped = quebrar_texto_por_largura(draw, texto_titulo, fonte_prod_titulo, card_w - (padding_h_desc * 2))[:2]
-
-                    espacamento_linha = int(tamanho_fonte_tit * 1.2)
-                    altura_titulos = len(titulos_wrapped) * espacamento_linha
-
-                    box_top_y = card_y2 - 10 - altura_titulos - (padding_v_desc * 2)
-                    y_cod = box_top_y - tamanho_fonte_cod - 6
-
-                    texto_cod = f"COD: {prod['codigo']}" + (f" - {prod['validade']}" if prod["validade"] else "")
-                    bbox_cod = draw.textbbox((0, 0), texto_cod, font=fonte_prod_codigo)
-                    draw.text((card_x1 + (card_w - (bbox_cod[2] - bbox_cod[0])) // 2, y_cod), texto_cod, fill="#222222", font=fonte_prod_codigo)
-
-                    if cor_box_desc != "TRANSPARENTE":
-                        draw.rounded_rectangle(
-                            [card_x1 + padding_h_desc, box_top_y, card_x2 - padding_h_desc, box_top_y + altura_titulos + (padding_v_desc * 2)],
-                            radius=max(4, card_radius // 2), fill=cor_box_desc
-                        )
-
-                    y_t = box_top_y + padding_v_desc
-                    for t_linha in titulos_wrapped:
-                        bbox_tit = draw.textbbox((0, 0), t_linha, font=fonte_prod_titulo)
-                        draw.text((card_x1 + (card_w - (bbox_tit[2] - bbox_tit[0])) // 2, y_t), t_linha, fill=cor_texto_desc, font=fonte_prod_titulo)
-                        y_t += espacamento_linha
-
-                    if prod.get("desconto"):
-                        desenhar_selo_no_card(draw, prod["desconto"], card_x2, card_y1)
-
-                    tem_preco = bool(prod.get("preco") and prod["preco"].strip())
-                    max_h_img = y_cod - card_y1 - 20
-
-                    if tem_preco:
-                        metade_card_w = card_w // 2
-                        col_img_x1, max_w_img = card_x1 + 8, metade_card_w - 12
-                        col_preco_x1, col_preco_x2 = card_x1 + metade_card_w + 4, card_x2 - 8
-
-                        if max_h_img > 30 and max_w_img > 30:
-                            img_fit = redimensionar_proporcional(prod["imagem"], max_w_img, max_h_img, fator_zoom)
-                            catalogo.paste(img_fit, (col_img_x1 + (max_w_img - img_fit.width) // 2, card_y1 + 10 + (max_h_img - img_fit.height) // 2), img_fit)
-
-                        tam_base = 85 if tamanho_preco_opcao == "Grande" else (65 if tamanho_preco_opcao == "Médio" else 45)
-                        tratar_e_desenhar_preco(draw, prod["preco"], col_preco_x1, col_preco_x2, card_y1 + 10 + (max_h_img // 2), cor_preco_final, tam_base, fonte_preco)
-                    else:
-                        max_w_img = card_w - 16
-                        if max_h_img > 30 and max_w_img > 30:
-                            img_fit = redimensionar_proporcional(prod["imagem"], max_w_img, max_h_img, fator_zoom)
-                            catalogo.paste(img_fit, (card_x1 + (card_w - img_fit.width) // 2, card_y1 + 10 + (max_h_img - img_fit.height) // 2), img_fit)
-
-                desenhar_texto_alinhado(draw, frase_rodape, ALTURA_MAX - ALTURA_RODAPE + 15, cor_r, tam_r, alinh_r, estilo_fonte=fonte_r, x_inicio=40, x_fim=LARGURA_MAX - 40)
-
-                if ativar_marca_dagua and texto_marca_dagua.strip():
-                    catalogo = aplicar_marca_dagua(catalogo, texto=texto_marca_dagua.strip(), opacidade=int((opacidade_marca / 100.0) * 255))
-
-                st.image(catalogo, caption="🎨 Catálogo Gerado", use_container_width=True)
-                img_byte_arr = io.BytesIO()
-                catalogo.convert("RGB").save(img_byte_arr, format="JPEG", quality=95)
-                st.download_button("📥 Baixar Catálogo em Alta Resolução (JPG)", data=img_byte_arr.getvalue(), file_name="catalogo_promocional.jpg", mime="image/jpeg", type="primary")
-
 # ==============================================================================
 # MÓDULO 2: CONVERSÃO DE FOTOS E-COMMERCE (PROTEGIDO)
 # ==============================================================================
 elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
     st.title("🖼️ Conversão de Fotos E-commerce")
-    st.write("Gere composições fotográficas padronizadas de produtos para o site.")
+    st.write("Gere composições fotográficas padronizadas para o site.")
 
+    # Validação de Senha do Módulo (5588)
     if not st.session_state["auth_ecom"]:
         st.subheader("🔒 Acesso Restrito ao Módulo")
         pwd_ecom = st.text_input("Digite a Senha do Módulo (5588)", type="password", key="pwd_ecom_input")
@@ -732,20 +18,29 @@ elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
                 st.error("Senha incorreta!")
         st.stop()
 
-    st.sidebar.header("⚙️ Configurações E-commerce")
-    cod_ecom = st.sidebar.text_input("Código do Produto no Site", help="Insira o código para buscar nome e informações do produto.")
+    # 1. ENTRADA DO CÓDIGO DO PRODUTO (Barra Lateral)
+    st.sidebar.header("⚙️ Dados do Produto")
+    cod_ecom = st.sidebar.text_input(
+        "Código do Produto", 
+        help="Digite o código do produto. O sistema buscará o nome no site e escreverá sobre a barra institucional."
+    )
 
     bg_ecom_color = st.sidebar.color_picker("Cor de Fundo da Arte", "#FFFFFF")
 
-    st.markdown("### 📤 Upload das Fotos do Produto")
+    # Ajuste de cores dos textos sobre a barra
+    st.sidebar.subheader("🎨 Estilo dos Textos no Banner")
+    cor_texto_banner = st.sidebar.color_picker("Cor do Nome/Código", "#1E1E1E")
+    tam_fonte_banner = st.sidebar.slider("Tamanho da Fonte do Nome", 12, 30, 18)
+
+    st.markdown("### 📤 Upload das 3 Fotos do Produto")
     col_up1, col_up2, col_up3 = st.columns(3)
 
     with col_up1:
-        file_f1 = st.file_uploader("1. Foto Principal (Esquerda - Preta)", type=["png", "jpg", "jpeg"], key="f1")
+        file_f1 = st.file_uploader("1. Foto Principal (Preto - Esquerda)", type=["png", "jpg", "jpeg"], key="ecom_f1")
     with col_up2:
-        file_f2 = st.file_uploader("2. Foto Lateral (Superior Dir. - Vermelha)", type=["png", "jpg", "jpeg"], key="f2")
+        file_f2 = st.file_uploader("2. Foto Lateral (Vermelho - Topo Dir.)", type=["png", "jpg", "jpeg"], key="ecom_f2")
     with col_up3:
-        file_f3 = st.file_uploader("3. Foto Extra (Meio Dir. - Azul)", type=["png", "jpg", "jpeg"], key="f3")
+        file_f3 = st.file_uploader("3. Foto Extra (Azul - Meio Dir.)", type=["png", "jpg", "jpeg"], key="ecom_f3")
 
     st.markdown("---")
 
@@ -753,75 +48,94 @@ elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
         if not file_f1 or not file_f2 or not file_f3:
             st.error("Por favor, faça o upload das 3 fotos obrigatórias.")
         elif not cod_ecom.strip():
-            st.error("Por favor, digite o código do produto na barra lateral.")
+            st.error("Por favor, informe o Código do Produto na barra lateral.")
         else:
-            with st.spinner("Buscando dados do produto e processando imagem..."):
+            with st.spinner("Buscando dados no site e montando a foto composta..."):
+                # Busca nome e código do produto via scraping
                 dados_prod = buscar_dados_produto(cod_ecom.strip())
+                nome_produto = dados_prod.get("titulo", f"PRODUTO {cod_ecom}").upper()
+                codigo_produto = dados_prod.get("codigo", cod_ecom)
 
-                # Dimensões padrão para foto de e-commerce (ex: 1200x675 / 16:9 HD)
+                # Dimensões da Imagem Composta (1200x675 / Proporção 16:9)
                 CANVAS_W = 1200
                 CANVAS_H = 675
                 HALF_W = CANVAS_W // 2  # 600px
 
                 ecom_canvas = Image.new("RGBA", (CANVAS_W, CANVAS_H), bg_ecom_color)
 
-                # Processa Foto 1 (Esquerda Total)
+                # -------------------------------------------------------------
+                # 1. FOTO 1 (Área Preta: Esquerda Inteira)
+                # -------------------------------------------------------------
                 img1 = Image.open(file_f1).convert("RGBA")
                 box_f1 = encaixar_e_centralizar(img1, HALF_W, CANVAS_H)
                 ecom_canvas.paste(box_f1, (0, 0), box_f1)
 
-                # Divisão da Coluna Direita (600px)
-                # Vermelho (30% h = 202px) | Azul (50% h = 338px) | Amarelo Banner (20% h = 135px)
-                H_RED = int(CANVAS_H * 0.30)
-                H_BLUE = int(CANVAS_H * 0.50)
-                H_YELLOW = CANVAS_H - H_RED - H_BLUE
+                # Proporções da Coluna Direita (30% / 50% / 20%)
+                H_RED = int(CANVAS_H * 0.30)        # 202px
+                H_BLUE = int(CANVAS_H * 0.50)       # 338px
+                H_YELLOW = CANVAS_H - H_RED - H_BLUE # 135px (Barra Institucional)
 
-                # Processa Foto 2 (Vermelho - Topo Direito)
+                # -------------------------------------------------------------
+                # 2. FOTO 2 (Área Vermelha: Topo Direito)
+                # -------------------------------------------------------------
                 img2 = Image.open(file_f2).convert("RGBA")
                 box_f2 = encaixar_e_centralizar(img2, HALF_W, H_RED)
                 ecom_canvas.paste(box_f2, (HALF_W, 0), box_f2)
 
-                # Processa Foto 3 (Azul - Meio Direito)
+                # -------------------------------------------------------------
+                # 3. FOTO 3 (Área Azul: Meio Direito)
+                # -------------------------------------------------------------
                 img3 = Image.open(file_f3).convert("RGBA")
                 box_f3 = encaixar_e_centralizar(img3, HALF_W, H_BLUE)
                 ecom_canvas.paste(box_f3, (HALF_W, H_RED), box_f3)
 
-                # Criar Banner Amarelo (Rodapé Direito)
-                banner_y = H_RED + H_BLUE
-                banner_bg = Image.new("RGBA", (HALF_W, H_YELLOW), "#FBC02D")
-                draw_banner = ImageDraw.Draw(banner_bg)
+                # -------------------------------------------------------------
+                # 4. BARRA INSTITUCIONAL (Área Amarela: Rodapé Direito)
+                # -------------------------------------------------------------
+                banner_y_pos = H_RED + H_BLUE
+                NOME_ARQUIVO_BARRA = "barra_institucional_foto_lote_ecommerce.jpg"
 
-                # Renderizar Logo
-                x_text_start = 15
-                if st.session_state["logo_bytes"] is not None:
-                    logo_ecom = Image.open(io.BytesIO(st.session_state["logo_bytes"])).convert("RGBA")
-                    logo_ecom.thumbnail((110, H_YELLOW - 10))
-                    banner_bg.paste(logo_ecom, (10, (H_YELLOW - logo_ecom.height) // 2), logo_ecom)
-                    x_text_start = logo_ecom.width + 20
+                # Tenta carregar a imagem da barra que estará no servidor
+                if os.path.exists(NOME_ARQUIVO_BARRA):
+                    img_barra = Image.open(NOME_ARQUIVO_BARRA).convert("RGBA")
+                    img_barra = img_barra.resize((HALF_W, H_YELLOW), Image.Resampling.LANCZOS)
+                else:
+                    # Fundo amarelo padrão de emergência caso o arquivo ainda não esteja no servidor
+                    img_barra = Image.new("RGBA", (HALF_W, H_YELLOW), "#FBC02D")
 
-                # Renderizar Texto do Produto e Código no Banner
-                fonte_b_tit = carregar_fonte("Padrão Negrito (Liberation / Arial)", 16)
-                fonte_b_cod = carregar_fonte("Padrão Negrito (Liberation / Arial)", 13)
+                draw_barra = ImageDraw.Draw(img_barra)
 
-                tit_prod = dados_prod.get("titulo", f"PRODUTO {cod_ecom}").upper()
-                linhas_tit = quebrar_texto_por_largura(draw_banner, tit_prod, fonte_b_tit, HALF_W - x_text_start - 10)[:2]
+                # Fontes para Nome e Código
+                fonte_nome = carregar_fonte("Padrão Negrito (Liberation / Arial)", tam_fonte_banner)
+                fonte_cod = carregar_fonte("Padrão Negrito (Liberation / Arial)", max(11, int(tam_fonte_banner * 0.75)))
 
-                y_b_txt = 10
-                for line in linhas_tit:
-                    draw_banner.text((x_text_start, y_b_txt), line, fill="#1E1E1E", font=fonte_b_tit)
-                    y_b_txt += 18
+                # Quebra o nome do produto se for muito longo para caber na largura da barra
+                margem_x = 15
+                largura_util = HALF_W - (margem_x * 2)
+                linhas_nome = quebrar_texto_por_largura(draw_barra, nome_produto, fonte_nome, largura_util)[:2]
 
-                draw_banner.text((x_text_start, y_b_txt + 4), f"CÓD: {dados_prod['codigo']}", fill="#333333", font=fonte_b_cod)
+                y_texto = 12
+                for linha in linhas_nome:
+                    bbox_l = draw_barra.textbbox((0, 0), linha, font=fonte_nome)
+                    # Escreve o nome do produto
+                    draw_barra.text((margem_x, y_texto), linha, fill=cor_texto_banner, font=fonte_nome)
+                    y_texto += (bbox_l[3] - bbox_l[1]) + 4
 
-                ecom_canvas.paste(banner_bg, (HALF_W, banner_y), banner_bg)
+                # Escreve o código do produto na linha abaixo
+                txt_codigo_final = f"CÓDIGO: {codigo_produto}"
+                draw_barra.text((margem_x, y_texto + 2), txt_codigo_final, fill=cor_texto_banner, font=fonte_cod)
 
-                # Desenhar linhas sutis de divisão para acabamento profissional
+                # Cola a barra processada no canto inferior direito
+                ecom_canvas.paste(img_barra, (HALF_W, banner_y_pos), img_barra)
+
+                # Divisórias sutis
                 draw_ecom = ImageDraw.Draw(ecom_canvas)
-                draw_ecom.line([(HALF_W, 0), (HALF_W, CANVAS_H)], fill="#E0E0E0", width=2)
-                draw_ecom.line([(HALF_W, H_RED), (CANVAS_W, H_RED)], fill="#E0E0E0", width=2)
-                draw_ecom.line([(HALF_W, H_RED + H_BLUE), (CANVAS_W, H_RED + H_BLUE)], fill="#E0E0E0", width=2)
+                draw_ecom.line([(HALF_W, 0), (HALF_W, CANVAS_H)], fill="#D0D0D0", width=2)
+                draw_ecom.line([(HALF_W, H_RED), (CANVAS_W, H_RED)], fill="#D0D0D0", width=2)
+                draw_ecom.line([(HALF_W, banner_y_pos), (CANVAS_W, banner_y_pos)], fill="#D0D0D0", width=2)
 
-                st.image(ecom_canvas, caption="📸 Imagem Composta Final p/ E-commerce", use_container_width=True)
+                # Exibição e Download
+                st.image(ecom_canvas, caption=f"📸 Imagem Composta E-commerce - Prod. {codigo_produto}", use_container_width=True)
 
                 out_bytes = io.BytesIO()
                 ecom_canvas.convert("RGB").save(out_bytes, format="JPEG", quality=95)
@@ -829,7 +143,7 @@ elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
                 st.download_button(
                     label="📥 Baixar Imagem Composta E-commerce (JPG)",
                     data=out_bytes.getvalue(),
-                    file_name=f"ecommerce_{cod_ecom}.jpg",
+                    file_name=f"ecommerce_{codigo_produto}.jpg",
                     mime="image/jpeg",
                     type="primary",
                 )
