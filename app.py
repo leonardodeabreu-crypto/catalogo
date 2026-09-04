@@ -27,62 +27,76 @@ SENHA_ECOMMERCE = "5588"
 SENHA_ADM = "5588"
 ARQUIVO_BARRA_PADRAO = "barra_institucional_foto_lote_ecommerce.jpg"
 
-# URL Base do seu E-commerce B2B
-URL_ECOMMERCE = "https://www.fornecimentodireto.com.br"
-
 if "auth_ecom" not in st.session_state:
     st.session_state["auth_ecom"] = False
 
 # ==============================================================================
-# FUNÇÃO DE SCRAPING DE PRODUTO (REPLICADA E CORRIGIDA)
+# FUNÇÃO DE BUSCA DO PRODUTO NO CATÁLOGO (CORRIGIDA PARA O SITE REAL)
 # ==============================================================================
 def buscar_dados_produto(codigo):
     """
-    Busca o produto no e-commerce pelo código e extrai a descrição/nome real,
-    evitando a captura do título institucional do site.
+    Busca o produto no catálogo oficial da Fornecimento Direto pelo código
+    e extrai o nome exatamente como consta no sistema.
     """
     codigo_limpo = str(codigo).strip()
     if not codigo_limpo:
         return {"titulo": "", "codigo": ""}
 
-    url_busca = f"{URL_ECOMMERCE}/?secao=busca&q={codigo_limpo}"
+    # URLs reais do catálogo da loja
+    urls_para_tentar = [
+        f"https://www.fornecimentodireto.com.br/Catalogo?q={codigo_limpo}",
+        f"https://www.fornecimentodireto.com.br/Catalogo?secao=busca&q={codigo_limpo}",
+        f"https://www.fornecimentodireto.com.br/produto/{codigo_limpo}"
+    ]
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     }
 
-    try:
-        session = requests.Session()
-        response = session.get(url_busca, headers=headers, timeout=8)
-        
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, "html.parser")
-            
-            # Busca especificamente pelas classes do produto (evitando a tag <title> genérica)
-            tag_titulo = (
-                soup.find("h1", class_=re.compile(r"prod|nome|desc|title", re.I)) or
-                soup.find("div", class_=re.compile(r"nome-produto|prod-nome|product-name|descricao", re.I)) or
-                soup.find("span", class_=re.compile(r"nome-produto|product-name", re.I)) or
-                soup.find("a", class_=re.compile(r"nome-produto|prod-title", re.I))
-            )
+    session = requests.Session()
 
-            if tag_titulo:
-                nome_limpo = tag_titulo.get_text().strip().upper()
+    for url in urls_para_tentar:
+        try:
+            response = session.get(url, headers=headers, timeout=6)
+            if response.status_code == 200:
+                html_text = response.text
+
+                # Padrão 1: "Código: 25217. CHA GUARANA POWER ORIGINAL 300ML"
+                padrao_codigo = re.search(
+                    rf"C[oó]digo:\s*{re.escape(codigo_limpo)}\.\s*([^<\n\r]+)",
+                    html_text,
+                    re.IGNORECASE
+                )
+                if padrao_codigo:
+                    nome_encontrado = padrao_codigo.group(1).strip().upper()
+                    # Remove pontos ou traços sobressalentes
+                    nome_limpo = re.sub(r"^[.\s\-]+|[.\s\-]+$", "", nome_encontrado)
+                    if len(nome_limpo) > 2:
+                        return {"titulo": nome_limpo, "codigo": codigo_limpo}
+
+                # Padrão 2: Raspagem por BeautifulSoup no HTML da página
+                soup = BeautifulSoup(html_text, "html.parser")
                 
-                # Ignora nomes institucionais ou títulos de busca genéricos
-                termos_ignorar = ["FORNECIMENTO DIRETO", "SOS DISTRIBUIDORA", "BUSCA", "PESQUISA", "RESULTADO"]
-                if len(nome_limpo) > 2 and not any(term in nome_limpo for term in termos_ignorar):
-                    return {"titulo": nome_limpo, "codigo": codigo_limpo}
+                # Procura por elementos que contenham o código e a descrição
+                elementos = soup.find_all(text=re.compile(re.escape(codigo_limpo)))
+                for el in elementos:
+                    texto_completo = el.parent.get_text().strip()
+                    if "Código" in texto_completo or "CÓDIGO" in texto_completo:
+                        partes = re.split(rf"{re.escape(codigo_limpo)}[.\s\-:]*", texto_completo, flags=re.IGNORECASE)
+                        if len(partes) > 1 and len(partes[1].strip()) > 2:
+                            nome_extraido = partes[1].split("\n")[0].split("\r")[0].strip().upper()
+                            return {"titulo": nome_extraido, "codigo": codigo_limpo}
 
-            # Caso haja meta tag OpenGraph com o nome do produto específico
-            og_title = soup.find("meta", property="og:title")
-            if og_title and og_title.get("content"):
-                nome_og = og_title["content"].strip().upper()
-                if "FORNECIMENTO DIRETO" not in nome_og:
-                    return {"titulo": nome_og, "codigo": codigo_limpo}
+                # Padrão 3: Meta Tag Title ou OpenGraph específico de produto
+                og_title = soup.find("meta", property="og:title")
+                if og_title and og_title.get("content"):
+                    tit = og_title["content"].strip().upper()
+                    if "FORNECIMENTO DIRETO" not in tit and "CATÁLOGO" not in tit:
+                        return {"titulo": tit, "codigo": codigo_limpo}
 
-    except Exception as e:
-        st.warning(f"Erro ao conectar com o site: {e}")
+        except Exception:
+            continue
 
     return {"titulo": f"PRODUTO {codigo_limpo}", "codigo": codigo_limpo}
 
@@ -277,7 +291,7 @@ elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
             st.error("Informe o Código do Produto no painel lateral.")
         else:
             with st.spinner("Buscando dados do produto no catálogo/site e montando a arte..."):
-                # Busca automática do nome
+                # Busca automática do nome diretamente na estrutura do catálogo
                 dados_prod = buscar_dados_produto(cod_ecom.strip())
                 nome_produto = dados_prod.get("titulo", f"PRODUTO {cod_ecom}").upper()
                 codigo_produto = dados_prod.get("codigo", cod_ecom)
