@@ -34,22 +34,21 @@ if "auth_ecom" not in st.session_state:
     st.session_state["auth_ecom"] = False
 
 # ==============================================================================
-# FUNÇÃO DE SCRAPING DE PRODUTO (REPLICADA DO CATÁLOGO)
+# FUNÇÃO DE SCRAPING DE PRODUTO (REPLICADA E CORRIGIDA)
 # ==============================================================================
 def buscar_dados_produto(codigo):
     """
-    Busca o produto no site do e-commerce pelo código e extrai o nome
-    exatamente como na estrutura utilizada no módulo de catálogo.
+    Busca o produto no e-commerce pelo código e extrai a descrição/nome real,
+    evitando a captura do título institucional do site.
     """
     codigo_limpo = str(codigo).strip()
     if not codigo_limpo:
         return {"titulo": "", "codigo": ""}
 
-    # Estrutura de busca padrão do e-commerce
     url_busca = f"{URL_ECOMMERCE}/?secao=busca&q={codigo_limpo}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     }
 
     try:
@@ -59,26 +58,31 @@ def buscar_dados_produto(codigo):
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
             
-            # Mapeamento de tags/classes comuns do catálogo/e-commerce
+            # Busca especificamente pelas classes do produto (evitando a tag <title> genérica)
             tag_titulo = (
-                soup.find("h1", class_=re.compile(r"prod|nome|titulo|title|descricao", re.I)) or
-                soup.find("div", class_=re.compile(r"prod-title|nome-produto|product-name", re.I)) or
-                soup.find("span", class_=re.compile(r"nome-produto|product-title", re.I)) or
-                soup.find("h1") or
-                soup.find("title")
+                soup.find("h1", class_=re.compile(r"prod|nome|desc|title", re.I)) or
+                soup.find("div", class_=re.compile(r"nome-produto|prod-nome|product-name|descricao", re.I)) or
+                soup.find("span", class_=re.compile(r"nome-produto|product-name", re.I)) or
+                soup.find("a", class_=re.compile(r"nome-produto|prod-title", re.I))
             )
 
             if tag_titulo:
-                texto_bruto = tag_titulo.get_text().strip()
-                # Limpa sufixos de título de página (ex: "CAFÉ TERRA - Fornecimento Direto" -> "CAFÉ TERRA")
-                nome_limpo = re.split(r"[-|–|]", texto_bruto)[0].strip().upper()
+                nome_limpo = tag_titulo.get_text().strip().upper()
                 
-                # Desconsidera títulos genéricos de página de busca
-                if len(nome_limpo) > 2 and not any(term in nome_limpo for term in ["BUSCA", "PESQUISA", "RESULTADO"]):
+                # Ignora nomes institucionais ou títulos de busca genéricos
+                termos_ignorar = ["FORNECIMENTO DIRETO", "SOS DISTRIBUIDORA", "BUSCA", "PESQUISA", "RESULTADO"]
+                if len(nome_limpo) > 2 and not any(term in nome_limpo for term in termos_ignorar):
                     return {"titulo": nome_limpo, "codigo": codigo_limpo}
 
+            # Caso haja meta tag OpenGraph com o nome do produto específico
+            og_title = soup.find("meta", property="og:title")
+            if og_title and og_title.get("content"):
+                nome_og = og_title["content"].strip().upper()
+                if "FORNECIMENTO DIRETO" not in nome_og:
+                    return {"titulo": nome_og, "codigo": codigo_limpo}
+
     except Exception as e:
-        st.warning(f"Erro ao conectar com o e-commerce: {e}")
+        st.warning(f"Erro ao conectar com o site: {e}")
 
     return {"titulo": f"PRODUTO {codigo_limpo}", "codigo": codigo_limpo}
 
@@ -273,7 +277,7 @@ elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
             st.error("Informe o Código do Produto no painel lateral.")
         else:
             with st.spinner("Buscando dados do produto no catálogo/site e montando a arte..."):
-                # Busca automática idêntica à do módulo do catálogo
+                # Busca automática do nome
                 dados_prod = buscar_dados_produto(cod_ecom.strip())
                 nome_produto = dados_prod.get("titulo", f"PRODUTO {cod_ecom}").upper()
                 codigo_produto = dados_prod.get("codigo", cod_ecom)
@@ -318,7 +322,7 @@ elif modulo_selecionado == "🖼️ Conversão de Fotos E-commerce":
 
                 txt_codigo_final = f"CÓDIGO: {codigo_produto}"
 
-                # Alinhamento vertical exato no centro da barra azul
+                # Alinhamento vertical no centro do banner
                 alturas_linhas = []
                 for linha in linhas_nome:
                     try:
